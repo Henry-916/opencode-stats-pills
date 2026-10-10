@@ -34,5 +34,14 @@
     "solid-js": "1.9.12",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Henry-916/opencode-stats-pills.git"
+  },
+  "homepage": "https://github.com/Henry-916/opencode-stats-pills#readme",
+  "bugs": {
+    "url": "https://github.com/Henry-916/opencode-stats-pills/issues"
+  },
+  "license": "MIT"
 }
