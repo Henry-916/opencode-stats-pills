@@ -17,8 +17,10 @@ The first output can be text, reasoning, or tool arguments. In OpenCode V2, `tim
 
 ### Data availability
 
-- Samples with missing timing, generation spans shorter than 100 ms, or reasoning timestamps detected as batched are excluded from speed calculations. `—` means no eligible measurement is available.
-- Historical text-only responses cannot provide speed measurements if their first-output events are unavailable.
+- Samples without reliable timing, with generation spans shorter than 100 ms, or with text timing but unobserved reasoning are excluded from full TPS. `—` means no eligible measurement is available. TTFT is evaluated separately.
+- First output uses nonempty text, reasoning, or tool-argument delta timestamps. Empty block-start notifications do not count. Observed times are saved in durable host plugin storage and restored after TUI restarts.
+- Unobserved historical replies use guarded content timestamps where available. Empty or briefly recorded reasoning blocks cannot recover actual generation timing; missing reliable records remain `—`.
+- Hidden reasoning with token counts but no usable timing can retain observed-output TTFT. Its tokens are not divided by the text-only generation span.
 - Tokens and cost use paginated request history, deduplicated by message ID, excluding title generation. Compaction requests with usage records remain included. Speed uses eligible assistant steps. Tokens and cost show `—` until the full history is loaded.
 - External subagents that do not report usage to OpenCode cannot provide accurate token statistics through this plugin.
 - Cache values normalized to zero by the host cannot distinguish missing upstream reporting from actual cache misses.
@@ -30,7 +32,7 @@ Amounts are in USD. Custom rates are per million tokens:
 
 `((uncached input + cache writes) × input + (output + reasoning) × output + cached reads × cacheRead) / 1,000,000`
 
-Token buckets are disjoint; reasoning uses the output rate and cache writes use the input rate. Each completed request matches its own provider/model and is deduplicated by message ID. Session totals exclude child sessions. The most recent request means the latest completed model step; a response can contain several steps.
+Token buckets are disjoint; reasoning uses the output rate and cache writes use the input rate. Each completed request matches its own provider/model and is deduplicated by message ID. Session totals exclude child sessions. The most recent conversation turn sums completed model and compaction requests since the latest user message. A turn with no completed requests shows `—`.
 
 Models without custom rates use OpenCode charges. A host value of `0` is treated as free only when model prices explicitly confirm that. Changing custom rates recalculates historical requests. Estimates may differ from invoices due to discounts or other charges.
 

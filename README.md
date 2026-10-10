@@ -47,7 +47,7 @@ Hover over a group to highlight it, then click to open its details. Press **Esc*
 | --- | --- |
 | Speed | Model time, average TTFT, generation speed |
 | Tokens | Cache hits, input, cached reads, output, reasoning |
-| Cost | Current session, most recent request |
+| Cost | Current session, most recent conversation turn |
 | Context | Recent request usage, context window, progress bar |
 
 In a main session, the bar sits below the input box. In a child session, it sits above the **Subagents / Shell** panel. Each session has its own totals; child usage is not added to its parent.
@@ -81,7 +81,7 @@ Rates are in **USD per million tokens**. These numbers are examples; enter your 
 
 `input` and `output` are required. Reasoning uses the output rate; cache writes use the input rate. `cacheRead` may be omitted when cached reads are unused; cached reads without a rate make the cost unavailable. Set an explicit `0` for free buckets.
 
-Custom prices override OpenCode charges for matching models. Other models use host charges. The cost pill sits between tokens and context; click it for the session total and most recent model request. Changing rates recalculates existing requests. Amounts are estimates, not invoices.
+Custom prices override OpenCode charges for matching models. Other models use host charges. The cost pill sits between tokens and context; click it for the session total and most recent conversation turn. Changing rates recalculates existing requests. Amounts are estimates, not invoices.
 
 Token usage and session cost sum model and compaction requests in the session timeline, excluding automatic title generation. Incomplete history or unpriced requests yield `—`. Parent and child sessions are calculated separately.
 

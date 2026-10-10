@@ -58,3 +58,14 @@ export function money(value?: number): string {
   if (value > 0 && value < 0.0001) return '$ <0.0001';
   return `$ ${value.toFixed(value > 0 && value < 0.01 ? 4 : 2)}`;
 }
+
+/** Completed requests since the latest user message, within this session. */
+export function latestTurnCost(
+  messages: readonly { id: string; type: string; time: { created: number } }[],
+  charges: ReadonlyMap<string, Charge>, prices: Prices, models: readonly ModelInfo[]
+): number | undefined {
+  const start = messages.filter(m => m.type === 'user').reduce((latest, m) => Math.max(latest, m.time.created), -Infinity);
+  if (!Number.isFinite(start)) return undefined;
+  const requests = messages.filter(m => m.type !== 'user' && m.time.created >= start && charges.has(m.id)).map(m => charges.get(m.id)!);
+  return requests.length ? sessionCost(requests, prices, models) : undefined;
+}

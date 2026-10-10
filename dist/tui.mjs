@@ -35,11 +35,12 @@ function fold(readings) {
     result.toolMs += r.toolMs;
     if (!finite(r.end) || !finite(r.streamEnd)) continue;
     result.modelMs += Math.max(0, r.streamEnd - r.start);
-    if (!r.batched && finite(r.first) && r.first >= r.start && r.first <= r.streamEnd) {
+    if (finite(r.first) && r.first >= r.start && r.first <= r.streamEnd) {
       result.ttftMs += r.first - r.start;
       result.ttftSteps++;
       const span = r.streamEnd - r.first;
-      if (span >= 100 && r.tokens) {
+      const usable = (!r.batched || r.observed && r.reasoningObserved) && !(r.observed && r.tokens?.reasoning && !r.reasoningObserved);
+      if (usable && span >= 100 && r.tokens) {
         result.decodeMs += span;
         result.decodeTokens += output(r.tokens);
       } else result.unmeasured++;
@@ -56,18 +57,32 @@ function reading(message) {
     if (c.type !== "tool") return sum;
     return sum + (finite(c.time.ran) && finite(c.time.completed) ? Math.max(0, c.time.completed - c.time.ran) : 0);
   }, 0);
-  const reasoningParts = message.content.filter((c) => c.type === "reasoning");
-  const batched = Boolean(message.tokens?.reasoning && reasoningParts.length && reasoningParts.every((c) => finite(c.time?.created) && finite(c.time?.completed)) && reasoningParts.reduce((ms, c) => ms + (c.time.completed - c.time.created), 0) < 100);
+  const reasoningParts = message.content.filter((c) => c.type === "reasoning").filter((c) => c.text?.length);
+  const batched = Boolean(message.tokens?.reasoning && !reasoningParts.some((c) => finite(c.time?.created) && finite(c.time?.completed) && c.time.completed - c.time.created >= 100));
   return { batched, id: message.id, start: message.time.created, first: firstContentTime(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
 }
 function firstContentTime(message) {
   if (message.content[0]?.type === "text" && message.content[0].text.trim()) return void 0;
-  const times = message.content.flatMap((c) => c.type === "reasoning" && finite(c.time?.created) ? [c.time.created] : c.type === "tool" && finite(c.time.created) ? [c.time.created] : []);
+  const times = message.content.flatMap((c) => c.type === "reasoning" && c.text?.length && finite(c.time?.created) && finite(c.time?.completed) && c.time.completed - c.time.created >= 100 ? [c.time.created] : c.type === "tool" && finite(c.time.created) ? [c.time.created] : []);
   return times.length ? Math.min(...times) : void 0;
 }
 function mergeReading(old, next) {
-  const times = [old?.first, next.first].filter(finite);
-  return { ...old, ...next, first: times.length ? Math.min(...times) : void 0, streamEnd: next.streamEnd ?? old?.streamEnd, end: next.end ?? old?.end, tokens: next.tokens ?? old?.tokens };
+  const observed = [old, next].filter((r) => Boolean(r?.observed));
+  const times = (observed.length ? observed : [old, next]).map((r) => r?.first).filter(finite);
+  return { ...old, ...next, first: times.length ? Math.min(...times) : void 0, observed: observed.length > 0, reasoningObserved: Boolean(old?.reasoningObserved || next.reasoningObserved), streamEnd: next.streamEnd ?? old?.streamEnd, end: next.end ?? old?.end, tokens: next.tokens ?? old?.tokens };
+}
+function observeOutput(r, kind, delta, time) {
+  if (!delta.length || !finite(time) || time < r.start || finite(r.streamEnd) && time > r.streamEnd) return r;
+  return { ...r, first: r.observed && finite(r.first) ? Math.min(r.first, time) : time, observed: true, reasoningObserved: Boolean(r.reasoningObserved || kind === "reasoning") };
+}
+function timingSample(r) {
+  return r.observed && finite(r.first) ? { first: r.first, reasoningObserved: Boolean(r.reasoningObserved) } : void 0;
+}
+function restoreTiming(r, sample) {
+  if (!sample || typeof sample !== "object") return r;
+  const s = sample;
+  if (!finite(s.first) || typeof s.reasoningObserved !== "boolean" || s.first < r.start || finite(r.streamEnd) && s.first > r.streamEnd) return r;
+  return mergeReading(r, { ...r, first: s.first, observed: true, reasoningObserved: s.reasoningObserved });
 }
 function sumUsage(usages) {
   const sum = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
@@ -130,6 +145,12 @@ function money(value) {
   if (value > 0 && value < 1e-4) return "$ <0.0001";
   return `$ ${value.toFixed(value > 0 && value < 0.01 ? 4 : 2)}`;
 }
+function latestTurnCost(messages, charges, prices, models) {
+  const start = messages.filter((m) => m.type === "user").reduce((latest, m) => Math.max(latest, m.time.created), -Infinity);
+  if (!Number.isFinite(start)) return void 0;
+  const requests = messages.filter((m) => m.type !== "user" && m.time.created >= start && charges.has(m.id)).map((m) => charges.get(m.id));
+  return requests.length ? sessionCost(requests, prices, models) : void 0;
+}
 
 // src/tui.tsx
 var icons = {
@@ -145,6 +166,12 @@ var tui_default = Plugin.define({
     const [popup, setPopup] = createSignal();
     const prices = parsePrices(ctx.options.prices);
     const charges = /* @__PURE__ */ new Map();
+    const timelines = /* @__PURE__ */ new Map();
+    const [timingCache, writeTimingCache] = ctx.storage.store("timing-v1", {
+      initial: {
+        sessions: {}
+      }
+    });
     const histories = /* @__PURE__ */ new Map();
     const latest = /* @__PURE__ */ new Map();
     const loading = /* @__PURE__ */ new Set();
@@ -168,6 +195,14 @@ var tui_default = Plugin.define({
     const hoverBg = () => ctx.themeMode === "dark" ? "#292929" : "#e4e4e4";
     const panelBg = () => ctx.themeMode === "dark" ? "#303030" : "#f4f4f4";
     function ingest(id, message) {
+      if (!timelines.has(id)) timelines.set(id, /* @__PURE__ */ new Map());
+      timelines.get(id).set(message.id, {
+        id: message.id,
+        type: message.type,
+        time: {
+          created: message.time.created
+        }
+      });
       if (message.type === "compaction" && message.status !== "running") {
         if (message.tokens || message.cost !== void 0) {
           if (!charges.has(id)) charges.set(id, /* @__PURE__ */ new Map());
@@ -194,7 +229,7 @@ var tui_default = Plugin.define({
       }
       const r = reading(message);
       const old = history(id).get(message.id);
-      history(id).set(message.id, mergeReading(old, r));
+      history(id).set(message.id, restoreTiming(mergeReading(old, r), timingCache.sessions[id]?.[message.id]));
       if (finite(message.time.completed) && message.tokens && message.time.created >= (latest.get(id)?.time.created ?? -1)) latest.set(id, message);
     }
     async function hydrate(id) {
@@ -220,17 +255,6 @@ var tui_default = Plugin.define({
           if (cursor) seen.add(cursor);
         } while (cursor);
         usageHydrated.add(id);
-        for await (const event of ctx.client.session.log({
-          sessionID: id,
-          after: 0,
-          follow: false
-        })) {
-          if (disposed) return;
-          if (event.type === "session.text.started" || event.type === "session.reasoning.started" || event.type === "session.tool.input.started") {
-            const r = history(id).get(event.data.assistantMessageID);
-            if (r) r.first = Math.min(r.first ?? Infinity, event.created);
-          }
-        }
         completedHydration.add(id);
         errors.delete(id);
       } catch {
@@ -239,6 +263,25 @@ var tui_default = Plugin.define({
         loading.delete(id);
         if (!disposed) changed();
       }
+    }
+    function recordOutput(id, messageID, type, delta, time) {
+      const r = history(id).get(messageID);
+      if (!r) return;
+      const next = observeOutput(r, type === "session.reasoning.delta" ? "reasoning" : type === "session.tool.input.delta" ? "tool" : "text", delta, time);
+      if (next === r) return;
+      history(id).set(messageID, next);
+      const sample = timingSample(next);
+      const saved = timingCache.sessions[id]?.[messageID];
+      if (saved?.first === sample.first && saved.reasoningObserved === sample.reasoningObserved) return;
+      void writeTimingCache((draft) => {
+        const entries = draft.sessions[id] ?? (draft.sessions[id] = {});
+        const old = entries[messageID];
+        entries[messageID] = {
+          first: Math.min(old?.first ?? sample.first, sample.first),
+          reasoningObserved: Boolean(old?.reasoningObserved || sample.reasoningObserved)
+        };
+      }).catch(() => {
+      });
     }
     const disposers = [];
     disposers.push(ctx.data.listen(({
@@ -255,11 +298,10 @@ var tui_default = Plugin.define({
           });
           break;
         }
-        case "session.text.started":
-        case "session.reasoning.started":
-        case "session.tool.input.started": {
-          const r = history(id).get(event.data.assistantMessageID);
-          if (r) r.first = Math.min(r.first ?? Infinity, event.created);
+        case "session.text.delta":
+        case "session.reasoning.delta":
+        case "session.tool.input.delta": {
+          recordOutput(id, event.data.assistantMessageID, event.type, event.data.delta, event.created);
           break;
         }
         case "session.step.streamed": {
@@ -311,14 +353,20 @@ var tui_default = Plugin.define({
           completedHydration.delete(id);
           history(id).clear();
           charges.delete(id);
+          timelines.delete(id);
           latest.delete(id);
           usageHydrated.delete(id);
           void hydrate(id);
           break;
         }
         case "session.deleted":
+          void writeTimingCache((draft) => {
+            delete draft.sessions[id];
+          }).catch(() => {
+          });
           histories.delete(id);
           charges.delete(id);
+          timelines.delete(id);
           latest.delete(id);
           usageHydrated.delete(id);
           completedHydration.delete(id);
@@ -345,11 +393,7 @@ var tui_default = Plugin.define({
       const limit = model?.limit.context;
       const percent = finite(used) && finite(limit) && limit > 0 ? Math.min(100, Math.round(used / limit * 100)) : void 0;
       const cost = usageHydrated.has(id) ? sessionCost(entries, prices, models) : void 0;
-      const lastCost = last ? chargeCost({
-        model: last.model,
-        tokens: last.tokens,
-        cost: last.cost
-      }, prices, models) : void 0;
+      const lastCost = usageHydrated.has(id) ? latestTurnCost([...timelines.get(id)?.values() ?? []], charges.get(id) ?? /* @__PURE__ */ new Map(), prices, models) : void 0;
       return {
         cost,
         lastCost,
@@ -366,7 +410,7 @@ var tui_default = Plugin.define({
     function rows(id, kind) {
       const s = snapshot(id), t = s.tokens;
       if (kind === "time") return [["\u6A21\u578B\u7528\u65F6", duration(s.timing.modelMs)], ["\u9996 token \u5E73\u5747\uFF08TTFT\uFF09", duration(s.timing.ttftSteps ? s.timing.ttftMs / s.timing.ttftSteps : void 0)], ["\u8F93\u51FA\u901F\u5EA6\uFF08TPS\uFF09", speed(s.timing)]];
-      if (kind === "cost") return [["\u5F53\u524D\u4F1A\u8BDD", money(s.cost)], ["\u6700\u8FD1\u4E00\u6B21\u8BF7\u6C42", money(s.lastCost)]];
+      if (kind === "cost") return [["\u5F53\u524D\u4F1A\u8BDD", money(s.cost)], ["\u6700\u8FD1\u4E00\u8F6E\u5BF9\u8BDD", money(s.lastCost)]];
       if (kind === "usage") return [["\u7F13\u5B58\u547D\u4E2D", cachePercent(t)], ["\u672A\u7F13\u5B58\u8F93\u5165", t ? `${t.input.toLocaleString("en-US")} tok` : "\u2014"], ["\u7F13\u5B58\u8BFB\u53D6", t ? `${t.cache.read.toLocaleString("en-US")} tok` : "\u2014"], ...t?.cache.write ? [["\u7F13\u5B58\u5199\u5165", `${t.cache.write.toLocaleString("en-US")} tok`]] : [], ["\u8F93\u51FA", t ? `${t.output.toLocaleString("en-US")} tok` : "\u2014"], ...t?.reasoning ? [["\u601D\u8003", `${t.reasoning.toLocaleString("en-US")} tok`]] : []];
       return [];
     }
@@ -478,7 +522,7 @@ var tui_default = Plugin.define({
               return props.sessionID;
             },
             kind: "context",
-            label: () => `${icons.context} ${s()?.percent === void 0 ? "\u2014" : `${s().percent}%`}`
+            label: () => `${icons.context} ${s()?.percent ?? 0}%`
           }), null);
           _$effect((_$p) => _$setProp(_el$3, "marginBottom", props.sessionDock ? 1 : 0, _$p));
           return _el$3;
@@ -491,7 +535,7 @@ var tui_default = Plugin.define({
       const content = createMemo(() => rows(p().sessionID, p().kind));
       const width = () => Math.max(12, Math.min(44, ctx.renderer.width - 2));
       const height = () => Math.min(p().kind === "context" ? 4 : content().length + 4, ctx.renderer.height - 2);
-      const heading = () => p().kind === "time" ? `${icons.time} \u4F1A\u8BDD\u7EDF\u8BA1` : p().kind === "usage" ? `${icons.usage} Token \u7528\u91CF` : p().kind === "cost" ? `${icons.cost} \u8D39\u7528` : `\u4E0A\u4E0B\u6587\u5DF2\u7528 ${s().percent === void 0 ? "\u2014" : s().percent + "%"}`;
+      const heading = () => p().kind === "time" ? `${icons.time} \u4F1A\u8BDD\u7EDF\u8BA1` : p().kind === "usage" ? `${icons.usage} Token \u7528\u91CF` : p().kind === "cost" ? `${icons.cost} \u8D39\u7528` : `\u4E0A\u4E0B\u6587\u5DF2\u7528 ${s().percent ?? 0}%`;
       const summary = () => p().kind === "usage" ? s().tokens ? total(s().tokens).toLocaleString("en-US") + " tok" : "\u2014" : p().kind === "context" ? `~${compact(s().used)} / ${compact(s().limit)}` : "";
       const filled = () => Math.round((s().percent ?? 0) / 100 * Math.max(0, width() - 4));
       let panel;
@@ -679,6 +723,7 @@ var tui_default = Plugin.define({
       for (const d of disposers) d();
       histories.clear();
       charges.clear();
+      timelines.clear();
       usageHydrated.clear();
     };
   }

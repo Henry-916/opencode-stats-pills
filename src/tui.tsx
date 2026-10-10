@@ -2,9 +2,9 @@ import { Plugin } from '@opencode/plugin/tui';
 import type { SessionMessageAssistant, SessionMessageInfo } from '@opencode/client';
 import type { BoxRenderable, Renderable } from '@opentui/core';
 import { createEffect, createMemo, createSignal, For, Show, onCleanup, onMount } from 'solid-js';
-import { cachePercent, compact, duration, finite, fold, mergeReading, reading, speed, total, sumUsage, type Reading } from './metrics.js';
+import { cachePercent, compact, duration, finite, fold, mergeReading, reading, speed, total, sumUsage, observeOutput, restoreTiming, timingSample, type TimingSample, type Reading } from './metrics.js';
 
-import { chargeCost, money, parsePrices, sessionCost, type Charge } from './cost.js';
+import { latestTurnCost, money, parsePrices, sessionCost, type Charge } from './cost.js';
 
 const icons = { time: '\uE900\uE904', usage: '\uE901', context: '\uE902', cost: '\uE903' };
 
@@ -19,6 +19,8 @@ export default Plugin.define({
     const [popup, setPopup] = createSignal<Popup>();
     const prices = parsePrices(ctx.options.prices);
     const charges = new Map<string, Map<string, Charge>>();
+    const timelines = new Map<string, Map<string, {id:string;type:string;time:{created:number}}>>();
+    const [timingCache, writeTimingCache] = ctx.storage.store<{sessions:Record<string,Record<string,TimingSample>>}>('timing-v1',{initial:{sessions:{}}});
     const histories = new Map<string, Map<string, Reading>>();
     const latest = new Map<string, SessionMessageAssistant>();
     const loading = new Set<string>();
@@ -39,6 +41,8 @@ export default Plugin.define({
     const panelBg = () => ctx.themeMode === 'dark' ? '#303030' : '#f4f4f4';
 
     function ingest(id: string, message: SessionMessageInfo) {
+      if (!timelines.has(id)) timelines.set(id,new Map());
+      timelines.get(id)!.set(message.id,{id:message.id,type:message.type,time:{created:message.time.created}});
       if (message.type === 'compaction' && message.status !== 'running') {
         if (message.tokens || message.cost !== undefined) {
           if (!charges.has(id)) charges.set(id,new Map());
@@ -54,7 +58,7 @@ export default Plugin.define({
       }
       const r = reading(message)!;
       const old = history(id).get(message.id);
-      history(id).set(message.id, mergeReading(old,r));
+      history(id).set(message.id, restoreTiming(mergeReading(old,r),timingCache.sessions[id]?.[message.id]));
       if (finite(message.time.completed) && message.tokens && message.time.created >= (latest.get(id)?.time.created ?? -1)) latest.set(id, message);
     }
     async function hydrate(id: string) {
@@ -72,18 +76,26 @@ export default Plugin.define({
           if (cursor) seen.add(cursor);
         } while (cursor);
         usageHydrated.add(id);
-        // Some V2 services retain the event log only for their process lifetime.
-        // Use persisted part times as fallback; never substitute stream end as first.
-        for await (const event of ctx.client.session.log({sessionID:id,after:0,follow:false})) {
-          if(disposed)return;
-          if(event.type==='session.text.started' || event.type==='session.reasoning.started' || event.type==='session.tool.input.started') {
-            const r=history(id).get(event.data.assistantMessageID);
-            if(r) r.first=Math.min(r.first??Infinity,event.created);
-          }
-        }
+        // V2 history logs omit payload deltas. Restore observed times from
+        // durable plugin storage; part timestamps remain a guarded fallback.
         completedHydration.add(id); errors.delete(id);
       } catch { errors.add(id); }
       finally { loading.delete(id); if (!disposed) changed(); }
+    }
+    function recordOutput(id:string,messageID:string,type:string,delta:string,time:number) {
+      const r=history(id).get(messageID);
+      if(!r)return;
+      const next=observeOutput(r,type==='session.reasoning.delta'?'reasoning':type==='session.tool.input.delta'?'tool':'text',delta,time);
+      if(next===r)return;
+      history(id).set(messageID,next);
+      const sample=timingSample(next)!;
+      const saved=timingCache.sessions[id]?.[messageID];
+      if(saved?.first===sample.first && saved.reasoningObserved===sample.reasoningObserved)return;
+      void writeTimingCache(draft=>{
+        const entries=draft.sessions[id]??(draft.sessions[id]={});
+        const old=entries[messageID];
+        entries[messageID]={first:Math.min(old?.first??sample.first,sample.first),reasoningObserved:Boolean(old?.reasoningObserved||sample.reasoningObserved)};
+      }).catch(()=>{});
     }
     const disposers: (() => void)[] = [];
     disposers.push(ctx.data.listen(({details:event}) => {
@@ -93,9 +105,8 @@ export default Plugin.define({
         case 'session.step.started': {
           history(id).set(event.data.assistantMessageID,{id:event.data.assistantMessageID,start:event.data.started,toolMs:0}); break;
         }
-        case 'session.text.started': case 'session.reasoning.started': case 'session.tool.input.started': {
-          const r=history(id).get(event.data.assistantMessageID);
-          if(r)r.first=Math.min(r.first??Infinity,event.created);break;
+        case 'session.text.delta': case 'session.reasoning.delta': case 'session.tool.input.delta': {
+          recordOutput(id,event.data.assistantMessageID,event.type,event.data.delta,event.created);break;
         }
         case 'session.step.streamed': {
           const r=history(id).get(event.data.assistantMessageID);
@@ -116,9 +127,9 @@ export default Plugin.define({
           break;
         }
         case 'session.revert.committed': case 'session.compaction.ended': {
-          completedHydration.delete(id); history(id).clear(); charges.delete(id); latest.delete(id); usageHydrated.delete(id); void hydrate(id); break;
+          completedHydration.delete(id); history(id).clear(); charges.delete(id); timelines.delete(id); latest.delete(id); usageHydrated.delete(id); void hydrate(id); break;
         }
-        case 'session.deleted': histories.delete(id); charges.delete(id); latest.delete(id); usageHydrated.delete(id); completedHydration.delete(id); if(popup()?.sessionID===id) close(); break;
+        case 'session.deleted': void writeTimingCache(draft=>{delete draft.sessions[id];}).catch(()=>{}); histories.delete(id); charges.delete(id); timelines.delete(id); latest.delete(id); usageHydrated.delete(id); completedHydration.delete(id); if(popup()?.sessionID===id) close(); break;
         default: return;
       }
       changed();
@@ -139,7 +150,7 @@ export default Plugin.define({
       const limit = model?.limit.context;
       const percent = finite(used) && finite(limit) && limit>0 ? Math.min(100,Math.round(used/limit*100)) : undefined;
       const cost = usageHydrated.has(id) ? sessionCost(entries, prices, models) : undefined;
-      const lastCost = last ? chargeCost({model:last.model,tokens:last.tokens,cost:last.cost},prices,models) : undefined;
+      const lastCost = usageHydrated.has(id) ? latestTurnCost([...timelines.get(id)?.values() ?? []],charges.get(id) ?? new Map(),prices,models) : undefined;
       return {cost,lastCost,timing:fold(history(id).values()),tokens:t,used,limit,percent,modelName:model?.name,historyError:errors.has(id),loading:loading.has(id)};
     }
     function rows(id: string, kind: Kind): Row[] {
@@ -149,7 +160,7 @@ export default Plugin.define({
         ['首 token 平均（TTFT）',duration(s.timing.ttftSteps?s.timing.ttftMs/s.timing.ttftSteps:undefined)],
         ['输出速度（TPS）',speed(s.timing)]
       ];
-      if(kind==='cost') return [['当前会话',money(s.cost)],['最近一次请求',money(s.lastCost)]];
+      if(kind==='cost') return [['当前会话',money(s.cost)],['最近一轮对话',money(s.lastCost)]];
       if(kind==='usage') return [
         ['缓存命中',cachePercent(t)],['未缓存输入',t?`${t.input.toLocaleString('en-US')} tok`:'—'],
         ['缓存读取',t?`${t.cache.read.toLocaleString('en-US')} tok`:'—'],
@@ -198,7 +209,7 @@ export default Plugin.define({
         <Pill sessionID={props.sessionID!} kind="time" label={()=>`${icons.time} ${s()?speed(s()!.timing):'— tok/s'}`}/>
         <Pill sessionID={props.sessionID!} kind="usage" label={()=>`${icons.usage} ${s()?.tokens?compact(total(s()!.tokens!)):'—'} tok · 缓存命中 ${cachePercent(s()?.tokens)}`}/>
         <Pill sessionID={props.sessionID!} kind="cost" label={()=>`${icons.cost} ${money(s()?.cost).replace(/^\$ /,'')}`}/>
-        <Pill sessionID={props.sessionID!} kind="context" label={()=>`${icons.context} ${s()?.percent===undefined?'—':`${s()!.percent}%`}`}/>
+        <Pill sessionID={props.sessionID!} kind="context" label={()=>`${icons.context} ${s()?.percent ?? 0}%`}/>
       </box></Show>;
     }
     function Details() {
@@ -207,7 +218,7 @@ export default Plugin.define({
       const content=createMemo(()=>rows(p().sessionID,p().kind));
       const width=()=>Math.max(12,Math.min(44,ctx.renderer.width-2));
       const height=()=>Math.min(p().kind==='context'?4:content().length+4,ctx.renderer.height-2);
-      const heading=()=>p().kind==='time'?`${icons.time} 会话统计`:p().kind==='usage'?`${icons.usage} Token 用量`:p().kind==='cost'?`${icons.cost} 费用`:`上下文已用 ${s().percent===undefined?'—':s().percent+'%'}`;
+      const heading=()=>p().kind==='time'?`${icons.time} 会话统计`:p().kind==='usage'?`${icons.usage} Token 用量`:p().kind==='cost'?`${icons.cost} 费用`:`上下文已用 ${s().percent ?? 0}%`;
       const summary=()=>p().kind==='usage'?(s().tokens?total(s().tokens!).toLocaleString('en-US')+' tok':'—'):p().kind==='context'?`~${compact(s().used)} / ${compact(s().limit)}`:'';
       const filled=()=>Math.round((s().percent??0)/100*Math.max(0,width()-4));
       let panel:BoxRenderable|undefined;
@@ -236,6 +247,6 @@ export default Plugin.define({
     disposers.push(ctx.ui.slot({append:'session.composer.top',render:i=><Show when={ctx.data.session.get(i.sessionID)?.parentID}><StatsPills sessionID={i.sessionID} sessionDock/></Show>}));
     disposers.push(ctx.ui.slot({append:'app',render:()=> <Show when={popup()}><Details/></Show>}));
     const resize=()=>close(); ctx.renderer.on('resize',resize);
-    return ()=>{disposed=true;close();ctx.renderer.off('resize',resize);for(const d of disposers)d();histories.clear();charges.clear();usageHydrated.clear();};
+    return ()=>{disposed=true;close();ctx.renderer.off('resize',resize);for(const d of disposers)d();histories.clear();charges.clear();timelines.clear();usageHydrated.clear();};
   }
 });
