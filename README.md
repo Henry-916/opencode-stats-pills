@@ -1,6 +1,6 @@
 # OpenCode StatsPills
 
-A small stats bar for OpenCode V2. See generation speed, token usage, cache hits, and context usage without opening the sidebar.
+A small stats bar for OpenCode V2. See generation speed, token usage, cache hits, cost, and context usage without opening the sidebar.
 
 **English** · [简体中文](README-zh.md)
 
@@ -47,11 +47,43 @@ Hover over a group to highlight it, then click to open its details. Press **Esc*
 | --- | --- |
 | Speed | Model time, average TTFT, generation speed |
 | Tokens | Cache hits, input, cached reads, output, reasoning |
+| Cost | Current session, most recent request |
 | Context | Recent request usage, context window, progress bar |
 
 In a main session, the bar sits below the input box. In a child session, it sits above the **Subagents / Shell** panel. Each session has its own totals; child usage is not added to its parent.
 
 Generation speed includes reasoning tokens. `—` means there is no usable timing sample, which can happen with historical or batched responses. The [statistics reference](docs/metrics.md) explains the calculations and data limitations.
+
+## Custom prices
+
+In the `plugins` array of `cli.json`, replace `"opencode-stats-pills"` with this object. Keep your other settings:
+
+```json
+{
+  "package": "/absolute/path/to/opencode/plugins/stats-pills",
+  "options": {
+    "prices": {
+      "your-provider-id": {
+        "your-model-id": {
+          "input": 1.0,
+          "output": 2.0,
+          "cacheRead": 0.1
+        }
+      }
+    }
+  }
+}
+```
+
+Set `package` to the absolute path of the local plugin directory containing `tui.ts`, for example `C:/Users/your-name/.config/opencode/plugins/stats-pills` on Windows. Do not use the plugin ID `opencode-stats-pills`: OpenCode 2.0.26 does not pass options when enabling an already discovered plugin by ID.
+
+Rates are in **USD per million tokens**. These numbers are examples; enter your provider ID, model ID, and actual rates, then restart OpenCode.
+
+`input` and `output` are required. Reasoning uses the output rate; cache writes use the input rate. `cacheRead` may be omitted when cached reads are unused; cached reads without a rate make the cost unavailable. Set an explicit `0` for free buckets.
+
+Custom prices override OpenCode charges for matching models. Other models use host charges. The cost pill sits between tokens and context; click it for the session total and most recent model request. Changing rates recalculates existing requests. Amounts are estimates, not invoices.
+
+Token usage and session cost sum model and compaction requests in the session timeline, excluding automatic title generation. Incomplete history or unpriced requests yield `—`. Parent and child sessions are calculated separately.
 
 ## Contributing
 

@@ -69,24 +69,88 @@ function mergeReading(old, next) {
   const times = [old?.first, next.first].filter(finite);
   return { ...old, ...next, first: times.length ? Math.min(...times) : void 0, streamEnd: next.streamEnd ?? old?.streamEnd, end: next.end ?? old?.end, tokens: next.tokens ?? old?.tokens };
 }
+function sumUsage(usages) {
+  const sum = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+  for (const t of usages) {
+    if (!t || ![t.input, t.output, t.reasoning, t.cache?.read, t.cache?.write].every(finite)) return void 0;
+    sum.input += t.input;
+    sum.output += t.output;
+    sum.reasoning += t.reasoning;
+    sum.cache.read += t.cache.read;
+    sum.cache.write += t.cache.write;
+  }
+  return sum;
+}
+
+// src/cost.ts
+function parsePrices(value) {
+  if (value === void 0) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("StatsPills prices must be a provider/model map");
+  for (const models of Object.values(value)) {
+    if (!models || typeof models !== "object" || Array.isArray(models)) throw new Error("StatsPills prices must be a provider/model map");
+    for (const price of Object.values(models)) {
+      if (!price || typeof price !== "object" || Array.isArray(price)) throw new Error("Invalid StatsPills model price");
+      const p = price;
+      if (!finite(p.input) || !finite(p.output) || Object.entries(p).some(([key, rate]) => !["input", "output", "cacheRead"].includes(key) || !finite(rate))) {
+        throw new Error("StatsPills prices require input/output and non-negative finite rates");
+      }
+    }
+  }
+  return value;
+}
+function tokenCost(t, p) {
+  if (!t) return void 0;
+  const buckets = [[t.input, p.input], [t.output, p.output], [t.reasoning, p.output], [t.cache.read, p.cacheRead], [t.cache.write, p.input]];
+  let sum = 0;
+  for (const [count, rate] of buckets) {
+    if (!finite(count) || count > 0 && !finite(rate)) return void 0;
+    sum += count === 0 ? 0 : count * rate / 1e6;
+  }
+  return finite(sum) ? sum : void 0;
+}
+function chargeCost(c, prices, models) {
+  const custom = prices[c.model.providerID]?.[c.model.id];
+  if (custom) return tokenCost(c.tokens, custom);
+  if (finite(c.cost) && c.cost > 0) return c.cost;
+  const model = models.find((m) => m.providerID === c.model.providerID && m.modelID === c.model.id);
+  const knownFree = model?.cost.length && model.cost.every((p) => p.input === 0 && p.output === 0 && p.cache.read === 0 && p.cache.write === 0);
+  return knownFree && c.cost === 0 ? 0 : void 0;
+}
+function sessionCost(charges, prices, models) {
+  let sum = 0;
+  for (const c of charges) {
+    const cost = chargeCost(c, prices, models);
+    if (cost === void 0) return void 0;
+    sum += cost;
+  }
+  return finite(sum) ? sum : void 0;
+}
+function money(value) {
+  if (!finite(value)) return "$ \u2014";
+  if (value > 0 && value < 1e-4) return "$ <0.0001";
+  return `$ ${value.toFixed(value > 0 && value < 0.01 ? 4 : 2)}`;
+}
 
 // src/tui.tsx
 var icons = {
   time: "\uE900",
   usage: "\uE901",
-  context: "\uE902"
+  context: "\uE902",
+  cost: "$"
 };
 var tui_default = Plugin.define({
   id: "opencode-stats-pills",
   setup(ctx) {
     const [revision, setRevision] = createSignal(0);
     const [popup, setPopup] = createSignal();
+    const prices = parsePrices(ctx.options.prices);
+    const charges = /* @__PURE__ */ new Map();
     const histories = /* @__PURE__ */ new Map();
     const latest = /* @__PURE__ */ new Map();
     const loading = /* @__PURE__ */ new Set();
     const completedHydration = /* @__PURE__ */ new Set();
     const errors = /* @__PURE__ */ new Set();
-    const cumulative = /* @__PURE__ */ new Map();
+    const usageHydrated = /* @__PURE__ */ new Set();
     let disposed = false;
     let previousFocus;
     const changed = () => setRevision((n) => n + 1);
@@ -104,6 +168,30 @@ var tui_default = Plugin.define({
     const hoverBg = () => ctx.themeMode === "dark" ? "#292929" : "#e4e4e4";
     const panelBg = () => ctx.themeMode === "dark" ? "#303030" : "#f4f4f4";
     function ingest(id, message) {
+      if (message.type === "compaction" && message.status !== "running") {
+        if (message.tokens || message.cost !== void 0) {
+          if (!charges.has(id)) charges.set(id, /* @__PURE__ */ new Map());
+          charges.get(id).set(message.id, {
+            model: ("model" in message ? message.model : void 0) ?? {
+              providerID: "",
+              id: ""
+            },
+            tokens: message.tokens,
+            cost: message.cost
+          });
+        }
+        return;
+      }
+      if (message.type !== "assistant") return;
+      if (finite(message.time.completed)) {
+        if (!charges.has(id)) charges.set(id, /* @__PURE__ */ new Map());
+        const old2 = charges.get(id).get(message.id);
+        charges.get(id).set(message.id, {
+          model: message.model,
+          tokens: message.tokens ?? old2?.tokens,
+          cost: message.cost ?? old2?.cost
+        });
+      }
       const r = reading(message);
       const old = history(id).get(message.id);
       history(id).set(message.id, mergeReading(old, r));
@@ -119,7 +207,6 @@ var tui_default = Plugin.define({
           const page = await ctx.client.message.list({
             sessionID: id,
             limit: 100,
-            type: "assistant",
             ...cursor ? {
               cursor
             } : {
@@ -127,11 +214,12 @@ var tui_default = Plugin.define({
             }
           });
           if (disposed) return;
-          for (const message of page.data) if (message.type === "assistant") ingest(id, message);
+          for (const message of page.data) ingest(id, message);
           cursor = page.cursor.next ?? void 0;
           if (cursor && seen.has(cursor)) throw new Error("Repeated history cursor");
           if (cursor) seen.add(cursor);
         } while (cursor);
+        usageHydrated.add(id);
         for await (const event of ctx.client.session.log({
           sessionID: id,
           after: 0,
@@ -192,9 +280,10 @@ var tui_default = Plugin.define({
               ...m.time,
               completed: event.created
             },
-            tokens: event.data.tokens
+            tokens: event.data.tokens,
+            cost: event.data.cost
           });
-          else if (r) latest.set(id, {
+          else if (r) ingest(id, {
             id: r.id,
             type: "assistant",
             time: {
@@ -208,29 +297,30 @@ var tui_default = Plugin.define({
               id: ""
             },
             agent: "",
-            content: []
+            content: [],
+            cost: event.data.cost
           });
           break;
         }
-        case "session.usage.updated":
-          cumulative.set(id, event.data.tokens);
-          break;
         case "session.idle": {
-          for (const m of ctx.data.session.message.list(id)) if (m.type === "assistant") ingest(id, m);
+          for (const m of ctx.data.session.message.list(id)) ingest(id, m);
           break;
         }
         case "session.revert.committed":
         case "session.compaction.ended": {
           completedHydration.delete(id);
           history(id).clear();
+          charges.delete(id);
           latest.delete(id);
+          usageHydrated.delete(id);
           void hydrate(id);
           break;
         }
         case "session.deleted":
           histories.delete(id);
+          charges.delete(id);
           latest.delete(id);
-          cumulative.delete(id);
+          usageHydrated.delete(id);
           completedHydration.delete(id);
           if (popup()?.sessionID === id) close();
           break;
@@ -243,16 +333,26 @@ var tui_default = Plugin.define({
       revision();
       const session = ctx.data.session.get(id);
       const messages = ctx.data.session.message.list(id);
-      for (const m of messages) if (m.type === "assistant") ingest(id, m);
-      const t = cumulative.get(id) ?? session?.tokens;
+      for (const m of messages) ingest(id, m);
+      const entries = [...charges.get(id)?.values() ?? []];
+      const t = usageHydrated.has(id) ? sumUsage(entries.map((c) => c.tokens)) : void 0;
       const last = latest.get(id);
       const selected = session?.parentID ? last?.model ?? session.model : ctx.ui.model.current() ?? last?.model ?? session?.model;
       const selectedID = selected && ("modelID" in selected ? selected.modelID : selected.id);
-      const model = ctx.data.location.model.list(session?.location ?? ctx.location)?.find((m) => m.providerID === selected?.providerID && m.modelID === selectedID);
+      const models = ctx.data.location.model.list(session?.location ?? ctx.location) ?? [];
+      const model = models.find((m) => m.providerID === selected?.providerID && m.modelID === selectedID);
       const used = last?.tokens ? total(last.tokens) : void 0;
       const limit = model?.limit.context;
       const percent = finite(used) && finite(limit) && limit > 0 ? Math.min(100, Math.round(used / limit * 100)) : void 0;
+      const cost = usageHydrated.has(id) ? sessionCost(entries, prices, models) : void 0;
+      const lastCost = last ? chargeCost({
+        model: last.model,
+        tokens: last.tokens,
+        cost: last.cost
+      }, prices, models) : void 0;
       return {
+        cost,
+        lastCost,
         timing: fold(history(id).values()),
         tokens: t,
         used,
@@ -266,6 +366,7 @@ var tui_default = Plugin.define({
     function rows(id, kind) {
       const s = snapshot(id), t = s.tokens;
       if (kind === "time") return [["\u6A21\u578B\u7528\u65F6", duration(s.timing.modelMs)], ["\u9996 token \u5E73\u5747\uFF08TTFT\uFF09", duration(s.timing.ttftSteps ? s.timing.ttftMs / s.timing.ttftSteps : void 0)], ["\u8F93\u51FA\u901F\u5EA6\uFF08TPS\uFF09", speed(s.timing)]];
+      if (kind === "cost") return [["\u5F53\u524D\u4F1A\u8BDD", money(s.cost)], ["\u6700\u8FD1\u4E00\u6B21\u8BF7\u6C42", money(s.lastCost)]];
       if (kind === "usage") return [["\u7F13\u5B58\u547D\u4E2D", cachePercent(t)], ["\u672A\u7F13\u5B58\u8F93\u5165", t ? `${t.input.toLocaleString("en-US")} tok` : "\u2014"], ["\u7F13\u5B58\u8BFB\u53D6", t ? `${t.cache.read.toLocaleString("en-US")} tok` : "\u2014"], ...t?.cache.write ? [["\u7F13\u5B58\u5199\u5165", `${t.cache.write.toLocaleString("en-US")} tok`]] : [], ["\u8F93\u51FA", t ? `${t.output.toLocaleString("en-US")} tok` : "\u2014"], ...t?.reasoning ? [["\u601D\u8003", `${t.reasoning.toLocaleString("en-US")} tok`]] : []];
       return [];
     }
@@ -369,6 +470,13 @@ var tui_default = Plugin.define({
             get sessionID() {
               return props.sessionID;
             },
+            kind: "cost",
+            label: () => `${icons.cost} ${money(s()?.cost).replace(/^\$ /, "")}`
+          }), null);
+          _$insert(_el$3, _$createComponent(Pill, {
+            get sessionID() {
+              return props.sessionID;
+            },
             kind: "context",
             label: () => `${icons.context} ${s()?.percent === void 0 ? "\u2014" : `${s().percent}%`}`
           }), null);
@@ -383,7 +491,7 @@ var tui_default = Plugin.define({
       const content = createMemo(() => rows(p().sessionID, p().kind));
       const width = () => Math.max(12, Math.min(44, ctx.renderer.width - 2));
       const height = () => Math.min(p().kind === "context" ? 4 : content().length + 4, ctx.renderer.height - 2);
-      const heading = () => p().kind === "time" ? `${icons.time} \u4F1A\u8BDD\u7EDF\u8BA1` : p().kind === "usage" ? `${icons.usage} Token \u7528\u91CF` : `\u4E0A\u4E0B\u6587\u5DF2\u7528 ${s().percent === void 0 ? "\u2014" : s().percent + "%"}`;
+      const heading = () => p().kind === "time" ? `${icons.time} \u4F1A\u8BDD\u7EDF\u8BA1` : p().kind === "usage" ? `${icons.usage} Token \u7528\u91CF` : p().kind === "cost" ? `${icons.cost} \u8D39\u7528` : `\u4E0A\u4E0B\u6587\u5DF2\u7528 ${s().percent === void 0 ? "\u2014" : s().percent + "%"}`;
       const summary = () => p().kind === "usage" ? s().tokens ? total(s().tokens).toLocaleString("en-US") + " tok" : "\u2014" : p().kind === "context" ? `~${compact(s().used)} / ${compact(s().limit)}` : "";
       const filled = () => Math.round((s().percent ?? 0) / 100 * Math.max(0, width() - 4));
       let panel;
@@ -570,6 +678,8 @@ var tui_default = Plugin.define({
       ctx.renderer.off("resize", resize);
       for (const d of disposers) d();
       histories.clear();
+      charges.clear();
+      usageHydrated.clear();
     };
   }
 });

@@ -9,7 +9,7 @@
 | Generation speed | Sum of output + reasoning tokens divided by total time from first output to model stream completion, across eligible completed steps |
 | Model time | Sum of step start → model stream completion durations; excludes subsequent tool execution |
 | Average TTFT | Average step start → first output duration across eligible samples |
-| Total tokens | Host-reported session cumulative `input + cache.read + cache.write + output + reasoning` |
+| Total tokens | Sum of completed model and compaction request `input + cache.read + cache.write + output + reasoning`, excluding title requests |
 | Cache hit rate | `cache.read / (input + cache.read + cache.write)` |
 | Context usage | Token usage of the latest completed model step divided by the selected model's context window; child sessions use their own model |
 
@@ -19,7 +19,19 @@ The first output can be text, reasoning, or tool arguments. In OpenCode V2, `tim
 
 - Samples with missing timing, generation spans shorter than 100 ms, or reasoning timestamps detected as batched are excluded from speed calculations. `—` means no eligible measurement is available.
 - Historical text-only responses cannot provide speed measurements if their first-output events are unavailable.
-- Total tokens use the host's cumulative session accounting, which can include background requests. Speed uses completed assistant steps, so their accounting scopes can differ.
+- Tokens and cost use paginated request history, deduplicated by message ID, excluding title generation. Compaction requests with usage records remain included. Speed uses eligible assistant steps. Tokens and cost show `—` until the full history is loaded.
 - External subagents that do not report usage to OpenCode cannot provide accurate token statistics through this plugin.
 - Cache values normalized to zero by the host cannot distinguish missing upstream reporting from actual cache misses.
 - Context is a recent-request reading, not cumulative session usage. A system/tools/messages breakdown is not available.
+
+## Cost
+
+Amounts are in USD. Custom rates are per million tokens:
+
+`((uncached input + cache writes) × input + (output + reasoning) × output + cached reads × cacheRead) / 1,000,000`
+
+Token buckets are disjoint; reasoning uses the output rate and cache writes use the input rate. Each completed request matches its own provider/model and is deduplicated by message ID. Session totals exclude child sessions. The most recent request means the latest completed model step; a response can contain several steps.
+
+Models without custom rates use OpenCode charges. A host value of `0` is treated as free only when model prices explicitly confirm that. Changing custom rates recalculates historical requests. Estimates may differ from invoices due to discounts or other charges.
+
+Costs sum request records in the same session instead of the host session total that includes title charges. Title requests are excluded from tokens, cache hit rate, and cost. Missing records or unpriced requests yield `—`. See [configuration](../README.md#custom-prices).

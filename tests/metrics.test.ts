@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cachePercent, total, fold, speed, compact, reading, mergeReading } from '../src/metrics.js';
+import { cachePercent, total, fold, speed, compact, reading, mergeReading, sumUsage } from '../src/metrics.js';
 const tokens = {input:100,output:60,reasoning:40,cache:{read:300,write:100}};
 test('disjoint input buckets and reasoning are counted once',()=>{assert.equal(total(tokens),600);assert.equal(cachePercent(tokens),'60%');});
 test('missing usage is distinct from a reported cache miss',()=>{assert.equal(cachePercent(),'—');assert.equal(cachePercent({...tokens,cache:{read:0,write:0}}),'0%');});
@@ -23,4 +23,12 @@ test('cached projections cannot overwrite the first live text timestamp',()=>{
 test('batched reasoning metadata cannot yield inflated historical TPS',()=>{
   const r=reading({id:'batch',type:'assistant',time:{created:0,streamed:11000,completed:12000},tokens:{...tokens,reasoning:531},content:[{type:'reasoning',time:{created:10800,completed:10804}},{type:'tool',time:{created:10810,ran:11000,completed:12000}}]} as any)!;
   assert.equal(r.batched,true);assert.equal(speed(fold([r])),'— tok/s');
+});
+
+test('timeline usage excludes title overhead and keeps thinking/cache buckets',()=>{
+  const reply={input:10917,output:10,reasoning:0,cache:{read:0,write:0}};
+  assert.deepEqual(sumUsage([reply]),reply);
+  assert.equal(total(sumUsage([reply])!),10927);
+  assert.deepEqual(sumUsage([tokens,tokens]),{input:200,output:120,reasoning:80,cache:{read:600,write:200}});
+  assert.equal(sumUsage([tokens,undefined]),undefined);
 });

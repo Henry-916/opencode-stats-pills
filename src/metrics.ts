@@ -67,3 +67,14 @@ export function mergeReading(old: Reading | undefined, next: Reading): Reading {
   const times=[old?.first,next.first].filter(finite);
   return {...old,...next,first:times.length?Math.min(...times):undefined,streamEnd:next.streamEnd??old?.streamEnd,end:next.end??old?.end,tokens:next.tokens??old?.tokens};
 }
+
+// Sum message-level usage, excluding title requests absent from the timeline.
+export function sumUsage(usages: Iterable<TokenUsageInfo | undefined>): TokenUsageInfo | undefined {
+  const sum: TokenUsageInfo = {input:0,output:0,reasoning:0,cache:{read:0,write:0}};
+  for (const t of usages) {
+    if (!t || ![t.input,t.output,t.reasoning,t.cache?.read,t.cache?.write].every(finite)) return undefined;
+    sum.input+=t.input;sum.output+=t.output;sum.reasoning+=t.reasoning;
+    sum.cache.read+=t.cache.read;sum.cache.write+=t.cache.write;
+  }
+  return sum;
+}

@@ -1,6 +1,6 @@
 # OpenCode StatsPills
 
-给 OpenCode V2 加一条轻量统计栏。不用展开侧栏，就能看到生成速度、Token 用量、缓存命中和上下文占用。
+给 OpenCode V2 加一条轻量统计栏。不用展开侧栏，就能看到生成速度、Token 用量、缓存命中、费用和上下文占用。
 
 [English](README.md) · **简体中文**
 
@@ -45,11 +45,43 @@
 | --- | --- |
 | 速度 | 模型用时、平均首 Token 延迟、生成速度 |
 | Token | 缓存命中、输入、缓存读取、输出、思考 |
+| 费用 | 当前会话、最近一次请求 |
 | 上下文 | 最近请求用量、模型窗口、进度条 |
 
 主会话显示在输入框下方，子会话显示在 **Subagents / Shell** 面板上方。每个会话单独统计，不会把子会话用量加到主会话上。
 
 速度包含思考 Token。`—` 表示没有可用的时间样本，历史回复或批量回传时可能出现。计算方式和数据限制见[统计口径](docs/metrics-zh.md)。
+
+## 自定义价格
+
+在 `cli.json` 的 `plugins` 数组中，将 `"opencode-stats-pills"` 替换为下面的对象，其他配置保持原样：
+
+```json
+{
+  "package": "/absolute/path/to/opencode/plugins/stats-pills",
+  "options": {
+    "prices": {
+      "your-provider-id": {
+        "your-model-id": {
+          "input": 1.0,
+          "output": 2.0,
+          "cacheRead": 0.1
+        }
+      }
+    }
+  }
+}
+```
+
+`package` 填安装时创建的本地插件目录的绝对路径（目录内有 `tui.ts`），例如 Windows 的 `C:/Users/你的用户名/.config/opencode/plugins/stats-pills`。不要填插件 ID `opencode-stats-pills`：OpenCode 2.0.26 按 ID 启用已发现的插件时不会传递 options。
+
+价格单位为 **美元 / 百万 Token**。示例价格仅用于说明格式，请填写自己的供应商 ID、模型 ID 和价格，然后重启 OpenCode。
+
+`input` 和 `output` 必填；思考按输出价格计算，缓存写入按输入价格计算。`cacheRead` 对应缓存读取；没有缓存读取用量时可以省略，有用量却未配置价格时费用显示 `—`。免费项目填 `0`。
+
+自定义价格优先于 OpenCode 的费用，未配置的模型使用宿主费用。费用 pill 位于 Token 和上下文之间，点击查看当前会话与最近一次模型请求的费用。修改价格会重新计算已有请求，金额是估算值，不是账单。
+
+Token 用量和会话费用汇总会话中的模型与压缩请求，不包含自动生成标题的用量。历史记录不完整或请求缺少价格时显示 `—`。主会话和子会话分别计算。
 
 ## 参与贡献
 
