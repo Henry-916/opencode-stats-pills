@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectIconFont, iconFamily, plainIcons, installedWindowsFont } from '../src/icons.js';
+import { detectIconFont, iconFamily, plainIcons, customIcons, initialIcons, parseIconMode, installedWindowsFont } from '../src/icons.js';
+
+test('explicit icon modes override installed-font detection and validate options', () => {
+  assert.equal(initialIcons(parseIconMode('plain')), plainIcons);
+  assert.equal(initialIcons(parseIconMode('custom')), customIcons);
+  assert.equal(parseIconMode(undefined), 'auto');
+  assert.equal(parseIconMode('auto'), 'auto');
+  for (const value of [null, true, {}, 'other']) assert.throws(() => parseIconMode(value));
+});
 
 test('installed Windows font is available before any subprocess or async render update', () => {
   const env = { LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local', WINDIR: 'C:\\Windows' };

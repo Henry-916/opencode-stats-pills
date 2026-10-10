@@ -8,6 +8,8 @@
   },
   "files": [
     "dist",
+    "assets/StatsPillsIcons.ttf",
+    "scripts/install-icons.ps1",
     "README.md"
   ],
   "scripts": {

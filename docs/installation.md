@@ -12,6 +12,29 @@ No font installation is required. The plugin uses ordinary symbols by default an
 
 ## Installation
 
+### Icon mode (optional)
+
+Custom icons are an optional easter egg; ordinary use does not require installing a font. To try them on Windows, manually run from the repository root:
+
+```powershell
+pwsh -File ./scripts/install-icons.ps1
+```
+
+The script installs the bundled font for the current user. It does not download anything or read or modify the terminal's `settings.json`. Neither the plugin nor the standard installation steps run it automatically. Add `-WhatIf` to preview the operation.
+
+Then manually add **StatsPills Icons Large v1.7** to your terminal's font fallback list, keeping your main font. For example, if your Windows Terminal profile uses `Cascadia Mono`, set that profile's `font.face` to `Cascadia Mono, StatsPills Icons Large v1.7`. Other terminals require their own fallback settings; you can also install the [font file](../assets/StatsPillsIcons.ttf) manually. Fully close and reopen the terminal, then start OpenCode.
+
+Automatic detection checks whether the font is installed; it cannot guarantee that the current terminal has configured font fallback. If icons appear as boxes, replace the existing `"opencode-stats-pills"` entry in `cli.json` with:
+
+```json
+{
+  "package": "C:/path/to/opencode/plugins/stats-pills",
+  "options": { "icons": "plain" }
+}
+```
+
+Set `package` to the absolute path of the local plugin directory containing `tui.ts`. `icons` supports `auto` (default, detects installed fonts), `plain` (always ordinary symbols), and `custom` (always custom icons, requiring the installed font and configured terminal fallback). Keep other options such as `prices` in the same object; do not add a duplicate plugin entry. Restart OpenCode after changing the mode.
+
 ### 1. Build the plugin
 
 Clone or download this repository, open a terminal in its directory, and run:

@@ -8,6 +8,13 @@ export const iconFamily = 'StatsPills Icons Large v1.7';
 export const customIcons = { time: '\uE900\uE904', usage: '\uE901', context: '\uE902', cost: '\uE903' };
 export const plainIcons = { time: '>', usage: '#', context: '%', cost: '$' };
 
+export type IconMode = 'auto' | 'plain' | 'custom';
+export function parseIconMode(value: unknown): IconMode {
+  if (value === undefined || value === 'auto') return 'auto';
+  if (value === 'plain' || value === 'custom') return value;
+  throw new Error('StatsPills icons must be auto, plain or custom');
+}
+
 // The former local installer used this versioned file name. Check installed
 // font directories before rendering, without spawning a process in the TUI.
 export function installedWindowsFont(
@@ -22,7 +29,9 @@ export function installedWindowsFont(
   return paths.some(path => { try { return exists(path); } catch { return false; } });
 }
 
-export function initialIcons() {
+export function initialIcons(mode: IconMode = 'auto') {
+  if (mode === 'plain') return plainIcons;
+  if (mode === 'custom') return customIcons;
   return process.platform === 'win32' && installedWindowsFont() ? customIcons : plainIcons;
 }
 

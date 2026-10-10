@@ -179,6 +179,11 @@ import { win32 } from "node:path";
 var iconFamily = "StatsPills Icons Large v1.7";
 var customIcons = { time: "\uE900\uE904", usage: "\uE901", context: "\uE902", cost: "\uE903" };
 var plainIcons = { time: ">", usage: "#", context: "%", cost: "$" };
+function parseIconMode(value) {
+  if (value === void 0 || value === "auto") return "auto";
+  if (value === "plain" || value === "custom") return value;
+  throw new Error("StatsPills icons must be auto, plain or custom");
+}
 function installedWindowsFont(exists = existsSync, env = process.env) {
   const local = env.LOCALAPPDATA ?? win32.join(env.USERPROFILE ?? homedir(), "AppData", "Local");
   const paths = [
@@ -193,7 +198,9 @@ function installedWindowsFont(exists = existsSync, env = process.env) {
     }
   });
 }
-function initialIcons() {
+function initialIcons(mode = "auto") {
+  if (mode === "plain") return plainIcons;
+  if (mode === "custom") return customIcons;
   return process.platform === "win32" && installedWindowsFont() ? customIcons : plainIcons;
 }
 var probe = {
@@ -268,8 +275,9 @@ function wrapFooter(parent) {
 var tui_default = Plugin.define({
   id: "opencode-stats-pills",
   setup(ctx) {
-    const [icons, setIcons] = createSignal(initialIcons());
-    void hasIconFont().then((found) => {
+    const iconMode = parseIconMode(ctx.options.icons);
+    const [icons, setIcons] = createSignal(initialIcons(iconMode));
+    if (iconMode === "auto") void hasIconFont().then((found) => {
       if (found && !disposed) setIcons(customIcons);
     });
     const [revision, setRevision] = createSignal(0);

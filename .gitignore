@@ -3,5 +3,3 @@ work/
 *.log
 __pycache__/
 *.pyc
-scripts/install-icons.ps1
-assets/StatsPillsIcons.ttf

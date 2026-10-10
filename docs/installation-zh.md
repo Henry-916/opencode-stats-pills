@@ -12,6 +12,29 @@
 
 ## 安装
 
+### 图标模式（可选）
+
+专用图标是一个可选的小彩蛋，正常使用不需要安装字体。想体验时，Windows 用户可在仓库根目录手动运行：
+
+```powershell
+pwsh -File ./scripts/install-icons.ps1
+```
+
+脚本只为当前用户安装仓库附带的字体，不联网下载，也不读取或修改终端的 `settings.json`。插件和常规安装步骤不会自动运行它。可加 `-WhatIf` 预览安装操作。
+
+随后手动把 **StatsPills Icons Large v1.7** 加入终端字体回退列表，保留原来的正文字体。例如 Windows Terminal 中，若原来的字体是 `Cascadia Mono`，可将使用的配置文件的 `font.face` 设置为 `Cascadia Mono, StatsPills Icons Large v1.7`。其他终端按自己的字体回退设置配置；也可手动安装 [字体文件](../assets/StatsPillsIcons.ttf)。完全关闭并重新打开终端，再启动 OpenCode。
+
+自动检测只能判断字体是否安装，无法保证当前终端已配置字体回退。如果图标显示为方框，可在 `cli.json` 中把原来的 `"opencode-stats-pills"` 条目替换为：
+
+```json
+{
+  "package": "C:/path/to/opencode/plugins/stats-pills",
+  "options": { "icons": "plain" }
+}
+```
+
+`package` 填包含 `tui.ts` 的本地插件目录绝对路径。`icons` 支持 `auto`（默认，检测已安装字体）、`plain`（始终使用普通符号）和 `custom`（始终使用专用图标，需已安装字体且终端已配置回退）。其他 options 如 `prices` 可保留在同一对象中；不要重复添加插件条目。修改后重启 OpenCode。
+
 ### 1. 构建插件
 
 克隆或下载本仓库，在仓库目录打开终端，运行：
