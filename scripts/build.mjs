@@ -1,0 +1,3 @@
+import { build } from 'esbuild';
+import { transformAsync } from '@babel/core';
+await build({entryPoints:['src/tui.tsx'], outfile:'dist/tui.mjs', bundle:true, format:'esm', platform:'node', target:'es2022', external:['@opencode/*','@opentui/*','solid-js','solid-js/*'], plugins:[{name:'opentui-jsx',setup(b){b.onLoad({filter:/\.tsx$/},async args=>{const {readFile}=await import('node:fs/promises'); const result=await transformAsync(await readFile(args.path,'utf8'),{filename:args.path,presets:[['@babel/preset-typescript',{allExtensions:true,isTSX:true}],['babel-preset-solid',{moduleName:'@opentui/solid',generate:'universal'}]]}); return {contents:result.code,loader:'js'};});}}]});
