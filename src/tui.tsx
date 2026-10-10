@@ -6,7 +6,7 @@ import { cachePercent, contextReading, compact, duration, finite, fold, mergeRea
 
 import { latestTurnCost, money, parsePrices, sessionCost, type Charge } from './cost.js';
 
-import { customIcons, initialIcons, hasIconFont, parseIconMode } from './icons.js';
+import { customIcons, initialIcons, hasIconFont } from './icons.js';
 import { wrapFooter } from './layout.js';
 
 type Kind = 'time' | 'usage' | 'cost' | 'context';
@@ -16,9 +16,8 @@ type Row = [string, string];
 export default Plugin.define({
   id: 'opencode-stats-pills',
   setup(ctx) {
-    const iconMode = parseIconMode(ctx.options.icons);
-    const [icons, setIcons] = createSignal(initialIcons(iconMode));
-    if (iconMode === 'auto') void hasIconFont().then(found => { if (found && !disposed) setIcons(customIcons); });
+    const [icons, setIcons] = createSignal(initialIcons());
+    void hasIconFont().then(found => { if (found && !disposed) setIcons(customIcons); });
     const [revision, setRevision] = createSignal(0);
     const [popup, setPopup] = createSignal<Popup>();
     const prices = parsePrices(ctx.options.prices);
