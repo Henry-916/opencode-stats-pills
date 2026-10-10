@@ -12,11 +12,11 @@ A small stats bar for OpenCode V2. See generation speed, token usage, cache hits
 
 ![Context usage](assets/screenshots/context-usage.png)
 
-The UI is currently in Chinese and uses a bundled icon font.
+The UI is currently in Chinese. Icons automatically fall back to ordinary symbols when the existing custom font is not detected.
 
 ## Quick start
 
-Tested on **OpenCode 2.0.26**. You need OpenCode V2, Node.js/npm, and a terminal with mouse support. See the [installation guide](docs/installation.md) for dependency and font requirements.
+Tested on **OpenCode 2.0.26**. You need OpenCode V2, Node.js/npm, and a terminal with mouse support. See the [installation guide](docs/installation.md) for dependency requirements.
 
 ### Let OpenCode install it
 
@@ -25,12 +25,12 @@ Copy this prompt into OpenCode:
 ```text
 Install https://github.com/Henry-916/opencode-stats-pills for me.
 
-Read the repository's README and installation guide, then build and enable the plugin and configure its icon font. During installation:
+Read the repository's README and installation guide, then build and enable the plugin. During installation:
 - Check OpenCode V2 and the required dependencies. Explain what needs attention if tools are missing or versions are incompatible.
 - Keep the checkout in a permanent directory and create a local plugin entry using the build output's absolute path.
 - Merge existing configuration without overwriting other settings or adding duplicate entries. Preserve local changes and sessions.
 - If opencode-tps-meter is enabled, disable its TUI contribution to avoid duplicate statistics.
-- Configure icons for the terminal I use, preserving my current main font.
+- Preserve my terminal and font settings.
 
 Check the build output, entry path, and enabled configuration. Report the installation location and which applications need restarting. Do not send a model request just to verify installation; clearly report any incomplete steps.
 ```

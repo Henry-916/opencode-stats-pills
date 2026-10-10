@@ -5,10 +5,10 @@
 ## 环境要求
 
 - **OpenCode V2**，已在 **2.0.26** 验证，不支持 V1。
-- 支持鼠标操作和图标字体回退的终端。
+- 支持鼠标操作的终端。
 - 从源码构建需要 Node.js 和 npm；OpenTUI 开发依赖声明要求 Node.js 26 或更高版本。
 
-字体安装脚本支持稳定版 Windows Terminal，其他终端需手动配置字体。
+无需安装字体。插件默认使用普通符号，检测到本机已有 StatsPills Icons Large v1.7 字体后使用专用图标。Windows 下先检查已安装字体目录中的版本化字体文件，必要时再查询字体注册表；Linux/macOS 下使用 fc-list；检测不可用或失败时继续使用普通符号。专用图标仍需要终端已配置该字体作为回退字体。插件不会安装字体或修改终端设置。
 
 ## 安装
 
@@ -50,25 +50,3 @@ export { default } from 'C:/path/to/opencode-stats-pills/dist/tui.mjs'
   "plugins": ["-opencode-tps-meter", "opencode-stats-pills"]
 }
 ```
-
-### 4. 配置图标字体
-
-使用稳定版 Windows Terminal 时，在仓库根目录运行：
-
-```powershell
-pwsh -File ./scripts/install-icons.ps1
-```
-
-脚本会为当前用户安装附带字体，并将 **StatsPills Icons Large v1.7** 加入 Windows Terminal 默认字体回退列表；它会更新终端的 `settings.json`。
-
-手动配置时，安装 [StatsPillsIcons.ttf](../assets/StatsPillsIcons.ttf)，将 **StatsPills Icons Large v1.7** 设置为终端的回退字体。Windows Terminal 的字体配置示例：
-
-```json
-{
-  "font": {
-    "face": "Cascadia Mono, StatsPills Icons Large v1.7"
-  }
-}
-```
-
-Windows Terminal 1.21 或更高版本支持这种回退配置。安装字体后，完全关闭并重新打开终端，再启动 OpenCode。

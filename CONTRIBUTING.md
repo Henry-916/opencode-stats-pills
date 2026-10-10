@@ -27,7 +27,7 @@ Use the local entry described in [the installation guide](docs/installation.md) 
 - For UI changes, include a screenshot and your OpenCode/terminal versions. Check main and child sessions if the shared layout changes.
 - Keep the English and Chinese documentation in sync when changing shared instructions.
 
-The icon font source is `scripts/build-icons.py`; generating it requires Python and `fonttools`.
+Icon detection is read-only. Keep the ordinary-symbol fallback working without installing fonts or modifying terminal settings.
 
 ## 简体中文
 
@@ -43,4 +43,4 @@ Fork 仓库后，克隆自己的 fork，并为改动创建分支。开发命令�
 - 界面改动附截图及 OpenCode、终端版本。修改共享布局时检查主会话和子会话。
 - 修改共同的使用说明时，同步中英文文档。
 
-图标字体源码为 `scripts/build-icons.py`，生成字体需要 Python 和 `fonttools`。
+图标检测只读。请保持未安装字体时的普通符号回退，不安装字体或修改终端设置。

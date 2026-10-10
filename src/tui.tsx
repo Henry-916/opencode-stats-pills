@@ -6,7 +6,8 @@ import { cachePercent, contextReading, compact, duration, finite, fold, mergeRea
 
 import { latestTurnCost, money, parsePrices, sessionCost, type Charge } from './cost.js';
 
-const icons = { time: '\uE900\uE904', usage: '\uE901', context: '\uE902', cost: '\uE903' };
+import { customIcons, initialIcons, hasIconFont } from './icons.js';
+import { wrapFooter } from './layout.js';
 
 type Kind = 'time' | 'usage' | 'cost' | 'context';
 type Popup = { kind: Kind; sessionID: string; x: number; y: number };
@@ -15,6 +16,8 @@ type Row = [string, string];
 export default Plugin.define({
   id: 'opencode-stats-pills',
   setup(ctx) {
+    const [icons, setIcons] = createSignal(initialIcons());
+    void hasIconFont().then(found => { if (found && !disposed) setIcons(customIcons); });
     const [revision, setRevision] = createSignal(0);
     const [popup, setPopup] = createSignal<Popup>();
     const prices = parsePrices(ctx.options.prices);
@@ -198,21 +201,17 @@ export default Plugin.define({
       let root:BoxRenderable|undefined;
       // OpenCode 2.0.26 places prompt.footer slots in one row. Wrap its
       // existing children onto the next row so host status/actions remain visible.
-      let dockParent:BoxRenderable|undefined;
+      let restoreFooter:(()=>void)|undefined;
       onMount(()=>{
-        dockParent=root?.parent as BoxRenderable|undefined;
-        if(!dockParent)return;
-        if(!props.sessionDock){dockParent.flexWrap='wrap';dockParent.rowGap=0;}
+        const dockParent=root?.parent as BoxRenderable|undefined;
+        if(dockParent && !props.sessionDock) restoreFooter=wrapFooter(dockParent);
       });
-      onCleanup(()=>{
-        if(!dockParent||dockParent.isDestroyed)return;
-        if(!props.sessionDock){dockParent.flexWrap='no-wrap';dockParent.rowGap=undefined;}
-      });
+      onCleanup(()=>restoreFooter?.());
       return <Show when={props.sessionID}><box ref={root} marginBottom={props.sessionDock?1:0} width="100%" flexDirection="row" justifyContent="center" columnGap={1} flexWrap="wrap" minHeight={1} flexShrink={0}>
-        <Pill sessionID={props.sessionID!} kind="time" label={()=>`${icons.time} ${s()?speed(s()!.timing):'— tok/s'}`}/>
-        <Pill sessionID={props.sessionID!} kind="usage" label={()=>`${icons.usage} ${s()?.tokens?compact(total(s()!.tokens!)):'—'} tok · 缓存命中 ${cachePercent(s()?.tokens)}`}/>
-        <Pill sessionID={props.sessionID!} kind="cost" label={()=>`${icons.cost} ${money(s()?.cost).replace(/^\$ /,'')}`}/>
-        <Pill sessionID={props.sessionID!} kind="context" label={()=>`${icons.context} ${s()?.percent ?? '—'}%`}/>
+        <Pill sessionID={props.sessionID!} kind="time" label={()=>`${icons().time} ${s()?speed(s()!.timing):'— tok/s'}`}/>
+        <Pill sessionID={props.sessionID!} kind="usage" label={()=>`${icons().usage} ${s()?.tokens?compact(total(s()!.tokens!)):'—'} tok · 缓存命中 ${cachePercent(s()?.tokens)}`}/>
+        <Pill sessionID={props.sessionID!} kind="cost" label={()=>`${icons().cost} ${money(s()?.cost).replace(/^\$ /,'')}`}/>
+        <Pill sessionID={props.sessionID!} kind="context" label={()=>`${icons().context} ${s()?.percent == null ? '—' : `${s()!.percent}%`}`}/>
       </box></Show>;
     }
     function Details() {
@@ -221,7 +220,7 @@ export default Plugin.define({
       const content=createMemo(()=>rows(p().sessionID,p().kind));
       const width=()=>Math.max(12,Math.min(44,ctx.renderer.width-2));
       const height=()=>Math.min(p().kind==='context'?4:content().length+4,ctx.renderer.height-2);
-      const heading=()=>p().kind==='time'?`${icons.time} 会话统计`:p().kind==='usage'?`${icons.usage} Token 用量`:p().kind==='cost'?`${icons.cost} 费用`:`上下文已用 ${s().percent ?? '—'}%`;
+      const heading=()=>p().kind==='time'?`${icons().time} 会话统计`:p().kind==='usage'?`${icons().usage} Token 用量`:p().kind==='cost'?`${icons().cost} 费用`:`上下文已用 ${s().percent == null ? '—' : `${s().percent}%`}`;
       const summary=()=>p().kind==='usage'?(s().tokens?total(s().tokens!).toLocaleString('en-US')+' tok':'—'):p().kind==='context'?`~${compact(s().used)} / ${compact(s().limit)}`:'';
       const filled=()=>Math.round((s().percent??0)/100*Math.max(0,width()-4));
       let panel:BoxRenderable|undefined;

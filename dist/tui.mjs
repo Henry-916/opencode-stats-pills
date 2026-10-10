@@ -170,16 +170,108 @@ function latestTurnCost(messages, charges, prices, models) {
   return requests.length ? sessionCost(requests, prices, models) : void 0;
 }
 
-// src/tui.tsx
-var icons = {
-  time: "\uE900\uE904",
-  usage: "\uE901",
-  context: "\uE902",
-  cost: "\uE903"
+// src/icons.ts
+import { execFile } from "node:child_process";
+import { access } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { win32 } from "node:path";
+var iconFamily = "StatsPills Icons Large v1.7";
+var customIcons = { time: "\uE900\uE904", usage: "\uE901", context: "\uE902", cost: "\uE903" };
+var plainIcons = { time: ">", usage: "#", context: "%", cost: "$" };
+function installedWindowsFont(exists = existsSync, env = process.env) {
+  const local = env.LOCALAPPDATA ?? win32.join(env.USERPROFILE ?? homedir(), "AppData", "Local");
+  const paths = [
+    win32.join(local, "Microsoft", "Windows", "Fonts", "StatsPillsIcons-1.7.ttf"),
+    win32.join(env.WINDIR ?? "C:\\Windows", "Fonts", "StatsPillsIcons-1.7.ttf")
+  ];
+  return paths.some((path) => {
+    try {
+      return exists(path);
+    } catch {
+      return false;
+    }
+  });
+}
+function initialIcons() {
+  return process.platform === "win32" && installedWindowsFont() ? customIcons : plainIcons;
+}
+var probe = {
+  run: (command, args) => new Promise((resolve, reject) => {
+    execFile(
+      command,
+      args,
+      { encoding: "utf8", windowsHide: true, timeout: 3e3, maxBuffer: 4 * 1024 * 1024 },
+      (error, stdout) => error ? reject(error) : resolve(stdout)
+    );
+  }),
+  exists: async (path) => {
+    try {
+      await access(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 };
+async function detectIconFont(platform = process.platform, io = probe) {
+  if (platform === "win32") {
+    for (const hive of ["HKCU", "HKLM"]) {
+      try {
+        const output2 = await io.run("reg.exe", ["query", `${hive}\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts`, "/v", `${iconFamily} (TrueType)`]);
+        const value = output2.match(/REG_(?:EXPAND_)?SZ\s+([^\r\n]+)/)?.[1]?.trim();
+        if (!value) continue;
+        const expanded = value.replace(/%([^%]+)%/g, (match, name) => process.env[name] ?? match);
+        const path = win32.isAbsolute(expanded) ? expanded : win32.join(process.env.WINDIR ?? "C:\\Windows", "Fonts", expanded);
+        if (await io.exists(path)) return true;
+      } catch {
+      }
+    }
+    return false;
+  }
+  if (platform === "linux" || platform === "darwin") {
+    try {
+      const output2 = await io.run("fc-list", ["--format", "%{family}\n"]);
+      return output2.split(/[\r\n,]/).some((family) => family.trim() === iconFamily);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+var detected;
+function hasIconFont() {
+  return detected ??= process.platform === "win32" && installedWindowsFont() ? Promise.resolve(true) : detectIconFont();
+}
+
+// src/layout.ts
+import { Gutter, Unit, Wrap } from "@opentui/core/yoga";
+function wrapFooter(parent) {
+  const node = parent.getLayoutNode();
+  const previousWrap = node.getFlexWrap();
+  const previousGap = { ...node.getGap(Gutter.Row) };
+  node.setFlexWrap(Wrap.Wrap);
+  node.setGap(Gutter.Row, 0);
+  parent.requestRender();
+  let restored = false;
+  return () => {
+    if (restored || parent.isDestroyed) return;
+    restored = true;
+    if (node.getFlexWrap() === Wrap.Wrap) node.setFlexWrap(previousWrap);
+    const gap = node.getGap(Gutter.Row);
+    if (gap.unit === Unit.Point && gap.value === 0) node.setGap(Gutter.Row, previousGap);
+    parent.requestRender();
+  };
+}
+
+// src/tui.tsx
 var tui_default = Plugin.define({
   id: "opencode-stats-pills",
   setup(ctx) {
+    const [icons, setIcons] = createSignal(initialIcons());
+    void hasIconFont().then((found) => {
+      if (found && !disposed) setIcons(customIcons);
+    });
     const [revision, setRevision] = createSignal(0);
     const [popup, setPopup] = createSignal();
     const prices = parsePrices(ctx.options.prices);
@@ -488,22 +580,12 @@ var tui_default = Plugin.define({
         if (popup() && popup()?.sessionID !== id) close();
       });
       let root;
-      let dockParent;
+      let restoreFooter;
       onMount(() => {
-        dockParent = root?.parent;
-        if (!dockParent) return;
-        if (!props.sessionDock) {
-          dockParent.flexWrap = "wrap";
-          dockParent.rowGap = 0;
-        }
+        const dockParent = root?.parent;
+        if (dockParent && !props.sessionDock) restoreFooter = wrapFooter(dockParent);
       });
-      onCleanup(() => {
-        if (!dockParent || dockParent.isDestroyed) return;
-        if (!props.sessionDock) {
-          dockParent.flexWrap = "no-wrap";
-          dockParent.rowGap = void 0;
-        }
-      });
+      onCleanup(() => restoreFooter?.());
       return _$createComponent(Show, {
         get when() {
           return props.sessionID;
@@ -524,28 +606,28 @@ var tui_default = Plugin.define({
               return props.sessionID;
             },
             kind: "time",
-            label: () => `${icons.time} ${s() ? speed(s().timing) : "\u2014 tok/s"}`
+            label: () => `${icons().time} ${s() ? speed(s().timing) : "\u2014 tok/s"}`
           }), null);
           _$insert(_el$3, _$createComponent(Pill, {
             get sessionID() {
               return props.sessionID;
             },
             kind: "usage",
-            label: () => `${icons.usage} ${s()?.tokens ? compact(total(s().tokens)) : "\u2014"} tok \xB7 \u7F13\u5B58\u547D\u4E2D ${cachePercent(s()?.tokens)}`
+            label: () => `${icons().usage} ${s()?.tokens ? compact(total(s().tokens)) : "\u2014"} tok \xB7 \u7F13\u5B58\u547D\u4E2D ${cachePercent(s()?.tokens)}`
           }), null);
           _$insert(_el$3, _$createComponent(Pill, {
             get sessionID() {
               return props.sessionID;
             },
             kind: "cost",
-            label: () => `${icons.cost} ${money(s()?.cost).replace(/^\$ /, "")}`
+            label: () => `${icons().cost} ${money(s()?.cost).replace(/^\$ /, "")}`
           }), null);
           _$insert(_el$3, _$createComponent(Pill, {
             get sessionID() {
               return props.sessionID;
             },
             kind: "context",
-            label: () => `${icons.context} ${s()?.percent ?? "\u2014"}%`
+            label: () => `${icons().context} ${s()?.percent == null ? "\u2014" : `${s().percent}%`}`
           }), null);
           _$effect((_$p) => _$setProp(_el$3, "marginBottom", props.sessionDock ? 1 : 0, _$p));
           return _el$3;
@@ -558,7 +640,7 @@ var tui_default = Plugin.define({
       const content = createMemo(() => rows(p().sessionID, p().kind));
       const width = () => Math.max(12, Math.min(44, ctx.renderer.width - 2));
       const height = () => Math.min(p().kind === "context" ? 4 : content().length + 4, ctx.renderer.height - 2);
-      const heading = () => p().kind === "time" ? `${icons.time} \u4F1A\u8BDD\u7EDF\u8BA1` : p().kind === "usage" ? `${icons.usage} Token \u7528\u91CF` : p().kind === "cost" ? `${icons.cost} \u8D39\u7528` : `\u4E0A\u4E0B\u6587\u5DF2\u7528 ${s().percent ?? "\u2014"}%`;
+      const heading = () => p().kind === "time" ? `${icons().time} \u4F1A\u8BDD\u7EDF\u8BA1` : p().kind === "usage" ? `${icons().usage} Token \u7528\u91CF` : p().kind === "cost" ? `${icons().cost} \u8D39\u7528` : `\u4E0A\u4E0B\u6587\u5DF2\u7528 ${s().percent == null ? "\u2014" : `${s().percent}%`}`;
       const summary = () => p().kind === "usage" ? s().tokens ? total(s().tokens).toLocaleString("en-US") + " tok" : "\u2014" : p().kind === "context" ? `~${compact(s().used)} / ${compact(s().limit)}` : "";
       const filled = () => Math.round((s().percent ?? 0) / 100 * Math.max(0, width() - 4));
       let panel;

@@ -5,10 +5,10 @@
 ## Requirements
 
 - **OpenCode V2**. Tested with **2.0.26**; V1 is not supported.
-- A terminal with mouse support and a fallback font for the bundled icons.
+- A terminal with mouse support.
 - Node.js and npm to build from source. The OpenTUI development dependencies declare Node.js 26 or later.
 
-The font installer supports stable Windows Terminal. Other terminals need manual font setup.
+No font installation is required. The plugin uses ordinary symbols by default and selects custom icons if it detects the existing StatsPills Icons Large v1.7 font. On Windows, detection first checks the existing versioned font file in installed font directories, then queries the font registry if needed. Linux/macOS detection uses fc-list; if detection is unavailable or fails, ordinary symbols remain. Custom icons still require the terminal to use that font as a fallback. The plugin does not install fonts or change terminal settings.
 
 ## Installation
 
@@ -50,25 +50,3 @@ If `opencode-tps-meter` is also installed, you can disable its TUI contribution 
   "plugins": ["-opencode-tps-meter", "opencode-stats-pills"]
 }
 ```
-
-### 4. Set up the icons
-
-On stable Windows Terminal, run this script from the repository root:
-
-```powershell
-pwsh -File ./scripts/install-icons.ps1
-```
-
-The script installs the bundled font for the current user and adds **StatsPills Icons Large v1.7** to the default Windows Terminal font fallback list. It updates the terminal's `settings.json`.
-
-For manual setup, install [StatsPillsIcons.ttf](../assets/StatsPillsIcons.ttf) and configure your terminal to use **StatsPills Icons Large v1.7** as a fallback. A Windows Terminal font setting can look like this:
-
-```json
-{
-  "font": {
-    "face": "Cascadia Mono, StatsPills Icons Large v1.7"
-  }
-}
-```
-
-Windows Terminal 1.21 or later supports this fallback format. Fully close and reopen your terminal after font installation, then restart OpenCode.
