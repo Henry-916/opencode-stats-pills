@@ -23,8 +23,7 @@ export default Plugin.define({
     const prices = parsePrices(ctx.options.prices);
     const charges = new Map<string, Map<string, Charge>>();
     const timelines = new Map<string, Map<string, {id:string;type:string;time:{created:number}}>>();
-    const [timingCache, writeTimingCache] = ctx.storage.store<{sessions:Record<string,Record<string,TimingSample>>}>('timing-v1',{initial:{sessions:{}}});
-    const histories = new Map<string, Map<string, Reading>>();
+    const [timingCache, writeTimingCache] = ctx.storage.store<{sessions:Record<string,Record<string,TimingSample>>}>('timing-v1',{initial:{sessions:{}}});    const histories = new Map<string, Map<string, Reading>>();
     const latest = new Map<string, SessionMessageAssistant>();
     const loading = new Set<string>();
     const completedHydration = new Set<string>();
@@ -85,19 +84,19 @@ export default Plugin.define({
       } catch { errors.add(id); }
       finally { loading.delete(id); if (!disposed) changed(); }
     }
-    function recordOutput(id:string,messageID:string,delta:string,time:number) {
+    function recordOutput(id:string,messageID:string,delta:string,time:number,text=false) {
       const r=history(id).get(messageID);
       if(!r)return;
-      const next=observeOutput(r,delta,time);
+      const next=observeOutput(r,delta,time,text);
       if(next===r)return;
       history(id).set(messageID,next);
       const sample=timingSample(next)!;
       const saved=timingCache.sessions[id]?.[messageID];
-      if(saved?.first===sample.first)return;
+      if(saved?.first===sample.first&&saved.text===sample.text&&saved.lead===sample.lead)return;
       void writeTimingCache(draft=>{
         const entries=draft.sessions[id]??(draft.sessions[id]={});
         const old=entries[messageID];
-        entries[messageID]={first:Math.min(old?.first??sample.first,sample.first)};
+        entries[messageID]={...sample,first:Math.min(old?.first??sample.first,sample.first)};
       }).catch(()=>{});
     }
     const disposers: (() => void)[] = [];
@@ -113,7 +112,8 @@ export default Plugin.define({
           recordOutput(id,event.data.assistantMessageID,event.data.name,event.created);break;
         }
         case 'session.text.delta': case 'session.reasoning.delta': case 'session.tool.input.delta': {
-          recordOutput(id,event.data.assistantMessageID,event.data.delta,event.created);break;
+          // Only text opens the speed window; any payload still marks TTFT.
+          recordOutput(id,event.data.assistantMessageID,event.data.delta,event.created,event.type==='session.text.delta');break;
         }
         case 'session.step.streamed': {
           const r=history(id).get(event.data.assistantMessageID);

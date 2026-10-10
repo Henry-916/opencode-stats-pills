@@ -4,26 +4,26 @@ import { cachePercent, contextReading, duration, total, fold, speed, compact, re
 const tokens = {input:100,output:60,reasoning:40,cache:{read:300,write:100}};
 test('disjoint input buckets and reasoning are counted once',()=>{assert.equal(total(tokens),600);assert.equal(cachePercent(tokens),'60%');});
 test('missing usage is distinct from a reported cache miss',()=>{assert.equal(cachePercent(),'—');assert.equal(cachePercent({...tokens,cache:{read:0,write:0}}),'0%');});
-test('decode speed excludes TTFT and uses weighted time',()=>{const t=fold([{id:'1',start:1000,first:2000,observed:true,streamEnd:4000,end:11000,tokens,toolMs:7000},{id:'2',start:10000,first:11000,observed:true,streamEnd:19000,end:19000,tokens,toolMs:0}]);assert.equal(speed(t),'20.0 tok/s');assert.equal(t.modelMs,12000);assert.equal(t.ttftMs/t.ttftSteps,1000);assert.equal(t.toolMs,7000);});
-test('short positive spans are included without arbitrary duration thresholds',()=>{const t=fold([{id:'1',start:0,first:1000,streamEnd:1015,end:1015,tokens,toolMs:0}]);assert.equal(speed(t),'6666.7 tok/s');assert.equal(t.unmeasured,0);});
+test('speed excludes TTFT, tool time and reasoning tokens, weighted by time',()=>{const t=fold([{id:'1',start:1000,first:2000,textFirst:2000,chars:100,observed:true,streamEnd:4000,end:11000,tokens,toolMs:7000},{id:'2',start:10000,first:11000,textFirst:11000,chars:100,observed:true,streamEnd:19000,end:19000,tokens,toolMs:0}]);assert.equal(speed(t),'12.0 tok/s');assert.equal(t.modelMs,12000);assert.equal(t.ttftMs/t.ttftSteps,1000);assert.equal(t.toolMs,7000);});
+test('a reply that arrives as one batch has no measurable span',()=>{const t=fold([observeOutput({id:'1',start:0,streamEnd:1015,end:1015,chars:5,tokens,toolMs:0},'hello',1000,true)]);assert.equal(speed(t),'— tok/s');assert.equal(t.ttftMs,1000);assert.equal(t.decodeTokens,0);});
 test('partial cache hits never round up to full hit',()=>{assert.equal(cachePercent({...tokens,input:1,cache:{read:9999,write:0}}),'99.99%');});
 test('formatting handles unavailable and large counts',()=>{assert.equal(compact(),'—');assert.equal(compact(12946),'12.9K');});
 
-test('V2 stream completion excludes tools and includes thinking from first reasoning',()=>{
+test('V2 stream completion excludes tools; a reasoning start gives TTFT but no speed',()=>{
   const message={id:'v2',type:'assistant',time:{created:0,streamed:11000,completed:311000},tokens:{...tokens,output:600,reasoning:400},content:[{type:'reasoning',text:'thinking',time:{created:1000,completed:10900}},{type:'tool',name:'shell',time:{created:7000,ran:11000,completed:311000}}]} as any;
-  const r=reading(message)!;const t=fold([r]);assert.equal(r.first,1000);assert.equal(t.modelMs,11000);assert.equal(t.toolMs,300000);assert.equal(speed(t),'100.0 tok/s');
+  const r=reading(message)!;const t=fold([r]);assert.equal(r.first,1000);assert.equal(t.modelMs,11000);assert.equal(t.toolMs,300000);assert.equal(t.ttftMs,1000);assert.equal(speed(t),'— tok/s');
 });
-test('cached projections cannot overwrite the first live text timestamp',()=>{
+test('cached projections cannot overwrite the first live text batch',()=>{
   const textTokens={...tokens,output:100,reasoning:0};
-  const live=observeOutput(observeOutput({id:'x',start:0,streamEnd:11000,end:11100,tokens:textTokens,toolMs:0},'hello',1000),'world',2000);
-  const cache=reading({id:'x',type:'assistant',time:{created:0,streamed:11000,completed:11100},tokens:textTokens,content:[]} as any)!;
-  assert.equal(cache.first,undefined);assert.equal(speed(fold([mergeReading(live,cache)])),'10.0 tok/s');
+  const live=observeOutput(observeOutput({id:'x',start:0,streamEnd:11000,end:11100,tokens:textTokens,toolMs:0},'hello',1000,true),'world',2000,true);
+  const cache=reading({id:'x',type:'assistant',time:{created:0,streamed:11000,completed:11100},tokens:textTokens,content:[{type:'text',text:'helloworld'.repeat(5)}]} as any)!;
+  assert.equal(cache.first,undefined);assert.equal(speed(fold([mergeReading(live,cache)])),'9.0 tok/s');
   assert.equal(speed(fold([cache])),'— tok/s');
 });
 
-test('empty reasoning metadata does not replace the tool output timestamp',()=>{
+test('a tool call that arrives whole gives TTFT but no speed',()=>{
   const r=reading({id:'batch',type:'assistant',time:{created:0,streamed:11000,completed:12000},tokens:{...tokens,reasoning:531},content:[{type:'reasoning',time:{created:10800,completed:10804}},{type:'tool',name:'shell',time:{created:10810,ran:11000,completed:12000}}]} as any)!;
-  assert.equal(r.first,10810);assert.equal(speed(fold([r])),'3110.5 tok/s');
+  assert.equal(r.first,10810);assert.equal(fold([r]).ttftMs,10810);assert.equal(speed(fold([r])),'— tok/s');
 });
 
 test('timeline usage excludes title overhead and keeps thinking/cache buckets',()=>{
@@ -42,31 +42,33 @@ test('empty starts and deltas cannot supply a first token',()=>{
   assert.equal(observeOutput(r,'hello',-1),r);
 });
 
-test('observed reasoning survives batched projections and supplies full TPS',()=>{
+test('observed reasoning gives TTFT; speed starts at the first text batch',()=>{
   const r={id:'live',start:0,toolMs:0};
-  const live=observeOutput(observeOutput(r,'thinking',1000),'more',2000);
-  const projection=reading({id:'live',type:'assistant',time:{created:0,streamed:11000,completed:12000},tokens,content:[{type:'reasoning',text:'',time:{created:10800,completed:10809}}]} as any)!;
+  const live=observeOutput(observeOutput(observeOutput(r,'thinking',1000),'more',2000),'answ',6000,true);
+  const projection=reading({id:'live',type:'assistant',time:{created:0,streamed:11000,completed:12000},tokens,content:[{type:'reasoning',text:'',time:{created:10800,completed:10809}},{type:'text',text:'answer '.repeat(10)}]} as any)!;
   const merged=mergeReading(live,projection);
-  assert.equal(speed(fold([merged])),'10.0 tok/s');
   assert.equal(fold([merged]).ttftMs,1000);
+  assert.equal(speed(fold([merged])),'11.3 tok/s');
 });
 
-test('reported reasoning tokens are included in the single decode-speed formula',()=>{
-  const r=reading({id:'hidden',type:'assistant',time:{created:0,streamed:11000,completed:12000},tokens,content:[{type:'reasoning',text:'',time:{created:9000,completed:9009}},{type:'text',text:'hello'}]} as any)!;
-  const measured=observeOutput(r,'hello',10000);
-  const timing=fold([measured]);
+test('hidden reasoning tokens stay out of the speed numerator',()=>{
+  const r=reading({id:'hidden',type:'assistant',time:{created:0,streamed:11000,completed:12000},tokens,content:[{type:'reasoning',text:'',time:{created:9000,completed:9009}},{type:'text',text:'helloworld'}]} as any)!;
+  const timing=fold([observeOutput(r,'he',10000,true)]);
   assert.equal(timing.ttftSteps,1);
   assert.equal(timing.ttftMs,10000);
-  assert.equal(speed(timing),'100.0 tok/s');
+  assert.equal(speed(timing),'48.0 tok/s');
 });
 
-test('stored delta times restore after restart and reject invalid ranges',()=>{
-  const historical={id:'persist',start:0,streamEnd:11000,end:12000,tokens,toolMs:0};
-  const live=observeOutput(observeOutput(historical,'thinking',1000),'more',2000);
+test('stored samples restore after restart and reject invalid ranges',()=>{
+  const historical={id:'persist',start:0,streamEnd:11000,end:12000,chars:100,tokens,toolMs:0};
+  const live=observeOutput(observeOutput(historical,'thinking',1000),'more',2000,true);
   const sample=JSON.parse(JSON.stringify(timingSample(live)));
-  assert.equal(speed(fold([restoreTiming(historical,sample)])),'10.0 tok/s');
+  assert.deepEqual(sample,{first:1000,text:2000,lead:4});
+  const restored=fold([restoreTiming(historical,sample)]);
+  assert.equal(restored.ttftMs,1000);assert.equal(speed(restored),'6.4 tok/s');
   assert.equal(restoreTiming(historical,{first:12000,reasoningObserved:true}),historical);
   assert.equal(restoreTiming(historical,{first:'1000'}),historical);
+  assert.equal(restoreTiming(historical,{first:1000,text:12000,lead:4}).textFirst,undefined);
 });
 
 test('observed timestamps take precedence over inferred part starts',()=>{
@@ -76,36 +78,40 @@ test('observed timestamps take precedence over inferred part starts',()=>{
 });
 
 
-test('real 10ms coalesced Gemini reply follows the DSH decode formula',()=>{
-  const r=observeOutput({id:'gemini',start:1791627393179,streamEnd:1791627397394,end:1791627397398,tokens:{...tokens,output:34,reasoning:0},toolMs:0},'reply',1791627397384);
-  const timing=fold([r]);
-  assert.equal(speed(timing),'3400.0 tok/s');
-  assert.equal(timing.ttftMs,4205);
+test('real replies delivered in one batch give TTFT but no speed',()=>{
+  const gemini=fold([observeOutput({id:'gemini',start:1791627393179,streamEnd:1791627397394,end:1791627397398,chars:5,tokens:{...tokens,output:34,reasoning:0},toolMs:0},'reply',1791627397384,true)]);
+  assert.equal(speed(gemini),'— tok/s');
+  assert.equal(gemini.ttftMs,4205);
+  const greeting=fold([observeOutput({id:'greeting',start:1791631538884,streamEnd:1791631541623,end:1791631541625,chars:7,tokens:{...tokens,output:7,reasoning:0},toolMs:0},'你好，有什么事',1791631541617,true)]);
+  assert.equal(speed(greeting),'— tok/s');
+  assert.equal(greeting.ttftMs,2733);
 });
 
-test('distinct short deltas are measured without a 100ms gate',()=>{
-  const r=observeOutput(observeOutput({id:'short',start:0,streamEnd:1040,end:1040,tokens:{...tokens,output:10,reasoning:0},toolMs:0},'first',1000),'second',1020);
-  assert.equal(speed(fold([r])),'250.0 tok/s');
+test('distinct short text batches are measured without a duration gate',()=>{
+  const r=observeOutput(observeOutput({id:'short',start:0,streamEnd:1040,end:1040,chars:11,tokens:{...tokens,output:10,reasoning:0},toolMs:0},'first',1000,true),'second',1020,true);
+  assert.equal(speed(fold([r])),'136.4 tok/s');
 });
 
-test('unmeasured steps do not contribute tokens or time to the decode average',()=>{
-  const one=observeOutput(observeOutput({id:'one',start:0,streamEnd:2000,end:2000,tokens:{...tokens,output:10,reasoning:0},toolMs:0},'one',1000),'two',1500);
-  const two={id:'two',start:10000,streamEnd:18000,end:90000,tokens:{...tokens,output:90,reasoning:0},toolMs:72000};
-  assert.equal(speed(fold([one,two])),'10.0 tok/s');
+test('steps without a text span add neither tokens nor time',()=>{
+  const one=observeOutput(observeOutput({id:'one',start:0,streamEnd:2000,end:2000,chars:6,tokens:{...tokens,output:10,reasoning:0},toolMs:0},'one',1000,true),'two',1500,true);
+  const two={id:'two',start:10000,first:17990,toolFirst:17990,chars:40,streamEnd:18000,end:90000,tokens:{...tokens,output:90,reasoning:2000},toolMs:72000};
+  const t=fold([one,two]);
+  assert.equal(speed(t),'5.0 tok/s');assert.equal(t.unmeasured,1);assert.equal(t.ttftSteps,2);
 });
 
-test('a single output delta suffices while missing usage stays unknown',()=>{
-  const r=observeOutput(observeOutput({id:'same',start:0,streamEnd:2000,end:2000,tokens:{...tokens,reasoning:0},toolMs:0},'one',1000),'two',1000);
-  assert.equal(speed(fold([r])),'60.0 tok/s');
+test('deltas sharing the first timestamp form one batch; missing usage stays unknown',()=>{
+  const r=observeOutput(observeOutput(observeOutput({id:'same',start:0,streamEnd:2000,end:2000,chars:12,tokens:{...tokens,reasoning:0},toolMs:0},'one',1000,true),'two',1000,true),'three!',1500,true);
+  assert.equal(r.textLead,6);
+  assert.equal(speed(fold([r])),'30.0 tok/s');
   assert.equal(speed(fold([{...r,tokens:undefined}])),'— tok/s');
 });
 
-test('legacy persisted first-token samples retain their decode timing',()=>{
-  const r=restoreTiming({id:'legacy',start:0,streamEnd:2000,end:2000,tokens:{...tokens,output:20,reasoning:0},toolMs:0},{first:1990,reasoningObserved:false});
-  assert.equal(speed(fold([r])),'2000.0 tok/s');
+test('legacy first-token samples restore TTFT but not speed',()=>{
+  const r=restoreTiming({id:'legacy',start:0,streamEnd:2000,end:2000,chars:40,tokens:{...tokens,output:20,reasoning:0},toolMs:0},{first:1990,reasoningObserved:false});
+  assert.equal(fold([r]).ttftMs,1990);assert.equal(speed(fold([r])),'— tok/s');
 });
 
-test('zero-duration decode samples remain unavailable',()=>{assert.equal(speed(fold([{id:'zero',start:0,first:1000,streamEnd:1000,end:1100,tokens,toolMs:0}])),'— tok/s');});
+test('zero-length text windows remain unavailable',()=>{assert.equal(speed(fold([{id:'zero',start:0,first:1000,textFirst:1000,chars:100,streamEnd:1000,end:1100,tokens,toolMs:0}])),'— tok/s');});
 
 test('DSH context pressure uses prompt buckets, excludes output and thinking',()=>{
   assert.deepEqual(contextReading(tokens,10000),{used:500,limit:10000,percent:5});
@@ -114,10 +120,10 @@ test('DSH context pressure uses prompt buckets, excludes output and thinking',()
   assert.equal(contextReading({...tokens,input:NaN},10000).percent,undefined);
 });
 
-test('DSH includes zero-duration output in a mixed decode aggregate',()=>{
-  const a={id:'a',start:0,first:1000,streamEnd:2000,end:2000,tokens,toolMs:0};
+test('a zero-length text window adds no tokens to a mixed aggregate',()=>{
+  const a={id:'a',start:0,first:1000,textFirst:1000,chars:100,streamEnd:2000,end:2000,tokens,toolMs:0};
   const b={...a,id:'b',streamEnd:1000,end:1000};
-  assert.equal(speed(fold([a,b])),'200.0 tok/s');
+  assert.equal(speed(fold([a,b])),'60.0 tok/s');
 });
 
 test('cache rounding matches DSH near full hits and rejects invalid counts',()=>{
@@ -137,23 +143,34 @@ test('unnamed historical tool blocks do not invent a first token',()=>{
 });
 
 
-test('real short greeting keeps DSH decode timing without a rate cap',()=>{
-  const r={id:'greeting',start:1791631538884,first:1791631541617,streamEnd:1791631541623,end:1791631541625,tokens:{...tokens,output:7,reasoning:0},toolMs:0};
-  assert.equal(speed(fold([r])),'1166.7 tok/s');
-  assert.equal(speed(fold([{...r,first:undefined}])),'— tok/s');
+test('output shape counts the text and tool calls behind tokens.output',()=>{
+  const r=reading({id:'shape',type:'assistant',time:{created:0,streamed:2000,completed:2100},tokens,content:[{type:'reasoning',text:'hidden plan',time:{created:100,completed:900}},{type:'text',text:'abcde'},{type:'tool',name:'read',state:{status:'running',input:{a:1},metadata:{}},time:{created:1500}},{type:'tool',name:'glob',state:{status:'streaming',input:'{"b"'},time:{created:1200}}]} as any)!;
+  assert.equal(r.chars,5+4+7+4+4);
+  assert.equal(r.toolFirst,1200);
+  assert.equal(reading({id:'placeholder',type:'assistant',time:{created:0},content:[]} as any)!.chars,undefined);
+});
+
+test('hidden reasoning and whole tool calls no longer inflate a real Gemini session',()=>{
+  // Shaped after ses_eda2d6d21 step 22: 18s of encrypted reasoning, then the
+  // call 10ms before the stream ended. The old formula read 203,300 tok/s.
+  const tool=reading({id:'tool',type:'assistant',time:{created:0,streamed:18075,completed:18300},tokens:{...tokens,output:31,reasoning:2002},content:[{type:'reasoning',text:'',time:{created:18060,completed:18063}},{type:'tool',name:'read',state:{status:'completed',input:{filePath:'src/metrics.ts'}},time:{created:18065,ran:18075,completed:18300}}]} as any)!;
+  // Step 41: 432 hidden reasoning tokens, then 6,340 characters of streamed text.
+  const text=observeOutput(reading({id:'text',type:'assistant',time:{created:20000,streamed:51661,completed:51661},tokens:{...tokens,output:3234,reasoning:432},content:[{type:'text',text:'x'.repeat(6340)}]} as any)!,'x'.repeat(20),27287,true);
+  const t=fold([tool,text]);
+  assert.equal(speed(t),'132.3 tok/s');assert.equal(t.ttftSteps,2);assert.equal(t.unmeasured,1);
 });
 
 test('missing usage contributes neither numerator nor denominator',()=>{
-  const r={id:'good',start:0,first:1000,streamEnd:2000,end:2000,tokens,toolMs:0};
+  const r={id:'good',start:0,first:1000,textFirst:1000,chars:100,streamEnd:2000,end:2000,tokens,toolMs:0};
   const t=fold([r,{...r,id:'missing',streamEnd:20000,end:20000,tokens:undefined}]);
-  assert.equal(speed(t),'100.0 tok/s');
+  assert.equal(speed(t),'60.0 tok/s');
   assert.equal(t.unmeasured,1);
 });
 
-test('invalid timing and counts cannot produce a decode rate',()=>{
-  const r={id:'bad',start:1000,first:1500,streamEnd:2000,end:2100,tokens,toolMs:0};
-  for (const patch of [{start:NaN},{start:-1},{streamEnd:999},{end:1999},{first:999},{first:2001},{tokens:{...tokens,output:NaN}},{tokens:{...tokens,reasoning:-1}},{tokens:{...tokens,output:Number.MAX_VALUE,reasoning:Number.MAX_VALUE}}]) {
+test('invalid timing, counts and ordering cannot produce a speed',()=>{
+  const r={id:'bad',start:1000,first:1500,textFirst:1500,chars:100,streamEnd:2000,end:2100,tokens,toolMs:0};
+  assert.equal(speed(fold([r])),'120.0 tok/s');
+  for (const patch of [{start:NaN},{start:-1},{streamEnd:999},{end:1999},{textFirst:999},{textFirst:2001},{textFirst:undefined},{toolFirst:1400},{chars:0},{chars:NaN},{tokens:{...tokens,output:NaN}},{tokens:{...tokens,output:-1}},{tokens:{...tokens,output:0}}]) {
     assert.equal(speed(fold([{...r,...patch}])),'— tok/s');
   }
-  assert.equal(speed(fold([{...r,tokens:{...tokens,output:0,reasoning:0}}])),'— tok/s');
 });

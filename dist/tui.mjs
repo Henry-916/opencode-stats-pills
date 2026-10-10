@@ -53,13 +53,22 @@ function fold(readings) {
     if (finite(r.first) && r.first >= r.start && r.first <= r.streamEnd) {
       result.ttftMs += r.first - r.start;
       result.ttftSteps++;
-      if (r.tokens && finite(r.tokens.output) && finite(r.tokens.reasoning) && finite(output(r.tokens))) {
-        result.decodeMs += r.streamEnd - r.first;
-        result.decodeTokens += output(r.tokens);
-      } else result.unmeasured++;
-    } else result.unmeasured++;
+    }
+    const share = streamedShare(r);
+    if (share === void 0) {
+      result.unmeasured++;
+      continue;
+    }
+    result.decodeMs += r.streamEnd - r.textFirst;
+    result.decodeTokens += r.tokens.output * share;
   }
   return result;
+}
+function streamedShare(r) {
+  if (!finite(r.textFirst) || !finite(r.streamEnd) || r.textFirst < r.start || r.textFirst >= r.streamEnd) return void 0;
+  if (finite(r.toolFirst) && r.toolFirst < r.textFirst) return void 0;
+  if (!r.tokens || !finite(r.tokens.output) || r.tokens.output <= 0 || !finite(r.chars) || r.chars <= 0) return void 0;
+  return Math.max(0, 1 - (r.textLead ?? 0) / r.chars);
 }
 function speed(t) {
   return t.decodeMs > 0 && t.decodeTokens > 0 && finite(t.decodeMs) && finite(t.decodeTokens) ? `${(t.decodeTokens / (t.decodeMs / 1e3)).toFixed(1)} tok/s` : "\u2014 tok/s";
@@ -70,7 +79,19 @@ function reading(message) {
     if (c.type !== "tool") return sum;
     return sum + (finite(c.time.ran) && finite(c.time.completed) ? Math.max(0, c.time.completed - c.time.ran) : 0);
   }, 0);
-  return { id: message.id, start: message.time.created, first: firstContentTime(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
+  return { id: message.id, start: message.time.created, first: firstContentTime(message), ...outputShape(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
+}
+function outputShape(message) {
+  let chars = 0;
+  const tools = [];
+  for (const c of message.content) {
+    if (c.type === "text") chars += c.text?.length ?? 0;
+    if (c.type !== "tool") continue;
+    const input2 = c.state?.input;
+    chars += (c.name?.length ?? 0) + (typeof input2 === "string" ? input2 : JSON.stringify(input2 ?? {})).length;
+    if (finite(c.time?.created)) tools.push(c.time.created);
+  }
+  return chars ? { chars, ...tools.length ? { toolFirst: Math.min(...tools) } : {} } : {};
 }
 function firstContentTime(message) {
   if (message.content[0]?.type === "text" && message.content[0].text.trim()) return void 0;
@@ -80,21 +101,25 @@ function firstContentTime(message) {
 function mergeReading(old, next) {
   const observed = [old, next].filter((r) => Boolean(r?.observed));
   const times = (observed.length ? observed : [old, next]).map((r) => r?.first).filter(finite);
-  return { ...old, ...next, first: times.length ? Math.min(...times) : void 0, observed: observed.length > 0, streamEnd: next.streamEnd ?? old?.streamEnd, end: next.end ?? old?.end, tokens: next.tokens ?? old?.tokens };
+  const text = [old, next].filter((r) => finite(r?.textFirst)).sort((a, b) => a.textFirst - b.textFirst || (b.textLead ?? 0) - (a.textLead ?? 0))[0];
+  return { ...old, ...next, first: times.length ? Math.min(...times) : void 0, textFirst: text?.textFirst, textLead: text?.textLead, observed: observed.length > 0, streamEnd: next.streamEnd ?? old?.streamEnd, end: next.end ?? old?.end, tokens: next.tokens ?? old?.tokens };
 }
-function observeOutput(r, delta, time) {
+function observeOutput(r, delta, time, text = false) {
   if (!delta.length || !finite(time) || time < r.start || finite(r.streamEnd) && time > r.streamEnd) return r;
   const first = r.observed && finite(r.first) ? Math.min(r.first, time) : time;
-  return r.observed && r.first === first ? r : { ...r, first, observed: true };
+  const next = r.observed && r.first === first ? r : { ...r, first, observed: true };
+  if (!text || finite(next.textFirst) && time > next.textFirst) return next;
+  return { ...next, textFirst: time, textLead: (time === next.textFirst ? next.textLead ?? 0 : 0) + delta.length };
 }
 function timingSample(r) {
-  return r.observed && finite(r.first) ? { first: r.first } : void 0;
+  return r.observed && finite(r.first) ? { first: r.first, ...finite(r.textFirst) ? { text: r.textFirst, lead: r.textLead ?? 0 } : {} } : void 0;
 }
 function restoreTiming(r, sample) {
   if (!sample || typeof sample !== "object") return r;
   const s = sample;
-  if (!finite(s.first) || s.first < r.start || finite(r.streamEnd) && s.first > r.streamEnd) return r;
-  return mergeReading(r, { ...r, first: s.first, observed: true });
+  const inside = (t) => finite(t) && t >= r.start && !(finite(r.streamEnd) && t > r.streamEnd);
+  if (!inside(s.first)) return r;
+  return mergeReading(r, { ...r, first: s.first, observed: true, ...inside(s.text) && finite(s.lead) ? { textFirst: s.text, textLead: s.lead } : {} });
 }
 function sumUsage(usages) {
   const sum = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
@@ -374,19 +399,20 @@ var tui_default = Plugin.define({
         if (!disposed) changed();
       }
     }
-    function recordOutput(id, messageID, delta, time) {
+    function recordOutput(id, messageID, delta, time, text = false) {
       const r = history(id).get(messageID);
       if (!r) return;
-      const next = observeOutput(r, delta, time);
+      const next = observeOutput(r, delta, time, text);
       if (next === r) return;
       history(id).set(messageID, next);
       const sample = timingSample(next);
       const saved = timingCache.sessions[id]?.[messageID];
-      if (saved?.first === sample.first) return;
+      if (saved?.first === sample.first && saved.text === sample.text && saved.lead === sample.lead) return;
       void writeTimingCache((draft) => {
         const entries = draft.sessions[id] ?? (draft.sessions[id] = {});
         const old = entries[messageID];
         entries[messageID] = {
+          ...sample,
           first: Math.min(old?.first ?? sample.first, sample.first)
         };
       }).catch(() => {
@@ -414,7 +440,7 @@ var tui_default = Plugin.define({
         case "session.text.delta":
         case "session.reasoning.delta":
         case "session.tool.input.delta": {
-          recordOutput(id, event.data.assistantMessageID, event.data.delta, event.created);
+          recordOutput(id, event.data.assistantMessageID, event.data.delta, event.created, event.type === "session.text.delta");
           break;
         }
         case "session.step.streamed": {
