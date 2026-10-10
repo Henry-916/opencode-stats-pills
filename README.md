@@ -4,9 +4,13 @@ A small stats bar for OpenCode V2. See generation speed, token usage, cache hits
 
 **English** · [简体中文](README-zh.md)
 
-```text
-◴ 7.3 tok/s    ▤ 12.9K tok · 缓存命中 78%    ◌ 1%
-```
+![Stats bar](assets/screenshots/stats-bar.png)
+
+![Session statistics](assets/screenshots/session-stats.png)
+
+![Token usage](assets/screenshots/token-usage.png)
+
+![Context usage](assets/screenshots/context-usage.png)
 
 The UI is currently in Chinese and uses a bundled icon font.
 

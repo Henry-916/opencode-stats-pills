@@ -4,9 +4,13 @@
 
 [English](README.md) · **简体中文**
 
-```text
-◴ 7.3 tok/s    ▤ 12.9K tok · 缓存命中 78%    ◌ 1%
-```
+![统计栏](assets/screenshots/stats-bar.png)
+
+![会话统计](assets/screenshots/session-stats.png)
+
+![Token 用量](assets/screenshots/token-usage.png)
+
+![上下文占用](assets/screenshots/context-usage.png)
 
 ## 快速开始
 
