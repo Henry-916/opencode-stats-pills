@@ -133,10 +133,10 @@ function money(value) {
 
 // src/tui.tsx
 var icons = {
-  time: "\uE900",
+  time: "\uE900\uE904",
   usage: "\uE901",
   context: "\uE902",
-  cost: "$"
+  cost: "\uE903"
 };
 var tui_default = Plugin.define({
   id: "opencode-stats-pills",
@@ -392,7 +392,6 @@ var tui_default = Plugin.define({
         _$insertNode(_el$, _el$2);
         var _ref$ = anchor;
         typeof _ref$ === "function" ? _$use(_ref$, _el$) : anchor = _el$;
-        _$setProp(_el$, "paddingX", 1);
         _$setProp(_el$, "flexShrink", 0);
         _$setProp(_el$, "onMouseOver", () => setHover(true));
         _$setProp(_el$, "onMouseOut", () => setHover(false));
@@ -401,7 +400,7 @@ var tui_default = Plugin.define({
           e.stopPropagation();
           open(props.sessionID, props.kind, anchor);
         });
-        _$insert(_el$2, () => props.label());
+        _$insert(_el$2, () => ` ${props.label()} `);
         _$effect((_p$) => {
           var _v$ = hover() || active() ? hoverBg() : void 0, _v$2 = hover() || active() ? normal() : muted();
           _v$ !== _p$.e && (_p$.e = _$setProp(_el$, "backgroundColor", _v$, _p$.e));
@@ -449,6 +448,7 @@ var tui_default = Plugin.define({
           _$setProp(_el$3, "width", "100%");
           _$setProp(_el$3, "flexDirection", "row");
           _$setProp(_el$3, "justifyContent", "center");
+          _$setProp(_el$3, "columnGap", 1);
           _$setProp(_el$3, "flexWrap", "wrap");
           _$setProp(_el$3, "minHeight", 1);
           _$setProp(_el$3, "flexShrink", 0);

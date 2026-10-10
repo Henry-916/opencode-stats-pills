@@ -6,7 +6,7 @@ import { cachePercent, compact, duration, finite, fold, mergeReading, reading, s
 
 import { chargeCost, money, parsePrices, sessionCost, type Charge } from './cost.js';
 
-const icons = { time: '\uE900', usage: '\uE901', context: '\uE902', cost: '$' };
+const icons = { time: '\uE900\uE904', usage: '\uE901', context: '\uE902', cost: '\uE903' };
 
 type Kind = 'time' | 'usage' | 'cost' | 'context';
 type Popup = { kind: Kind; sessionID: string; x: number; y: number };
@@ -169,11 +169,13 @@ export default Plugin.define({
       const [hover,setHover]=createSignal(false);
       let anchor:BoxRenderable|undefined;
       const active=()=>popup()?.sessionID===props.sessionID && popup()?.kind===props.kind;
-      return <box ref={anchor} paddingX={1} flexShrink={0}
+      // Keep adjacent cells in the same foreground run: enlarged icon outlines
+      // overhang their cell, and terminal padding otherwise uses default colors.
+      return <box ref={anchor} flexShrink={0}
         backgroundColor={hover()||active()?hoverBg():undefined}
         onMouseOver={()=>setHover(true)} onMouseOut={()=>setHover(false)}
         onMouseDown={e=>{if(e.button!==0)return;e.stopPropagation();open(props.sessionID,props.kind,anchor);}}>
-        <text fg={hover()||active()?normal():muted()}>{props.label()}</text>
+        <text fg={hover()||active()?normal():muted()}>{` ${props.label()} `}</text>
       </box>;
     }
     function StatsPills(props:{sessionID?:string;sessionDock?:boolean}) {
@@ -192,7 +194,7 @@ export default Plugin.define({
         if(!dockParent||dockParent.isDestroyed)return;
         if(!props.sessionDock){dockParent.flexWrap='no-wrap';dockParent.rowGap=undefined;}
       });
-      return <Show when={props.sessionID}><box ref={root} marginBottom={props.sessionDock?1:0} width="100%" flexDirection="row" justifyContent="center" flexWrap="wrap" minHeight={1} flexShrink={0}>
+      return <Show when={props.sessionID}><box ref={root} marginBottom={props.sessionDock?1:0} width="100%" flexDirection="row" justifyContent="center" columnGap={1} flexWrap="wrap" minHeight={1} flexShrink={0}>
         <Pill sessionID={props.sessionID!} kind="time" label={()=>`${icons.time} ${s()?speed(s()!.timing):'— tok/s'}`}/>
         <Pill sessionID={props.sessionID!} kind="usage" label={()=>`${icons.usage} ${s()?.tokens?compact(total(s()!.tokens!)):'—'} tok · 缓存命中 ${cachePercent(s()?.tokens)}`}/>
         <Pill sessionID={props.sessionID!} kind="cost" label={()=>`${icons.cost} ${money(s()?.cost).replace(/^\$ /,'')}`}/>

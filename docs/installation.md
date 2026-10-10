@@ -59,14 +59,14 @@ On stable Windows Terminal, run this script from the repository root:
 pwsh -File ./scripts/install-icons.ps1
 ```
 
-The script installs the bundled font for the current user and adds **StatsPills Icons Large** to the default Windows Terminal font fallback list. It updates the terminal's `settings.json`.
+The script installs the bundled font for the current user and adds **StatsPills Icons Large v1.7** to the default Windows Terminal font fallback list. It updates the terminal's `settings.json`.
 
-For manual setup, install [StatsPillsIcons.ttf](../assets/StatsPillsIcons.ttf) and configure your terminal to use **StatsPills Icons Large** as a fallback. A Windows Terminal font setting can look like this:
+For manual setup, install [StatsPillsIcons.ttf](../assets/StatsPillsIcons.ttf) and configure your terminal to use **StatsPills Icons Large v1.7** as a fallback. A Windows Terminal font setting can look like this:
 
 ```json
 {
   "font": {
-    "face": "Cascadia Mono, StatsPills Icons Large"
+    "face": "Cascadia Mono, StatsPills Icons Large v1.7"
   }
 }
 ```

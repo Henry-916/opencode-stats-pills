@@ -9,12 +9,12 @@ if (-not $settings.profiles) { $settings | Add-Member -NotePropertyName profiles
 if (-not $settings.profiles.defaults) { $settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{}) -Force }
 $iconSource = Join-Path $PSScriptRoot '../assets/StatsPillsIcons.ttf'
 $fontDirectory = Join-Path $env:LOCALAPPDATA 'Microsoft/Windows/Fonts'
-$installedFont = Join-Path $fontDirectory 'StatsPillsIcons-1.1.ttf'
+$installedFont = Join-Path $fontDirectory 'StatsPillsIcons-1.7.ttf'
 New-Item -ItemType Directory -Path $fontDirectory -Force | Out-Null
 Copy-Item -LiteralPath $iconSource -Destination $installedFont -Force
 $fontRegistry = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
 New-Item -Path $fontRegistry -Force | Out-Null
-New-ItemProperty -Path $fontRegistry -Name 'StatsPills Icons Large (TrueType)' -Value $installedFont -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $fontRegistry -Name 'StatsPills Icons Large v1.7 (TrueType)' -Value $installedFont -PropertyType String -Force | Out-Null
 if (-not ('StatsPillsFontLoader' -as [type])) {
 Add-Type -TypeDefinition @"
 using System;
@@ -31,8 +31,10 @@ $fontBroadcastResult = [IntPtr]::Zero
 $defaults = $settings.profiles.defaults
 if(-not ($defaults.PSObject.Properties.Name -contains 'font')) { $defaults | Add-Member -NotePropertyName font -NotePropertyValue ([pscustomobject]@{}) }
 $faces = if($defaults.font.face){[string]$defaults.font.face}else{'Cascadia Mono'}
-if($faces -match 'StatsPills Icons' -and $faces -notmatch 'StatsPills Icons Large'){$faces=$faces.Replace('StatsPills Icons','StatsPills Icons Large')}
-if($faces -notmatch 'StatsPills Icons Large'){$faces += ', StatsPills Icons Large'}
+$iconFamily = 'StatsPills Icons Large v1.7'
+# Replace prior icon fallbacks while preserving the user's main font.
+$fontFaces = @($faces -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '^StatsPills Icons(?: Large)?(?: v[0-9.]+)?$' })
+$faces = (@($fontFaces) + @($iconFamily)) -join ', '
 $defaults.font | Add-Member -NotePropertyName face -NotePropertyValue $faces -Force
 $settings | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $terminalSettings -Encoding utf8
 Write-Output "Registered $loaded icon font; terminal font: $faces"

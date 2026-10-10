@@ -59,14 +59,14 @@ export { default } from 'C:/path/to/opencode-stats-pills/dist/tui.mjs'
 pwsh -File ./scripts/install-icons.ps1
 ```
 
-脚本会为当前用户安装附带字体，并将 **StatsPills Icons Large** 加入 Windows Terminal 默认字体回退列表；它会更新终端的 `settings.json`。
+脚本会为当前用户安装附带字体，并将 **StatsPills Icons Large v1.7** 加入 Windows Terminal 默认字体回退列表；它会更新终端的 `settings.json`。
 
-手动配置时，安装 [StatsPillsIcons.ttf](../assets/StatsPillsIcons.ttf)，将 **StatsPills Icons Large** 设置为终端的回退字体。Windows Terminal 的字体配置示例：
+手动配置时，安装 [StatsPillsIcons.ttf](../assets/StatsPillsIcons.ttf)，将 **StatsPills Icons Large v1.7** 设置为终端的回退字体。Windows Terminal 的字体配置示例：
 
 ```json
 {
   "font": {
-    "face": "Cascadia Mono, StatsPills Icons Large"
+    "face": "Cascadia Mono, StatsPills Icons Large v1.7"
   }
 }
 ```
