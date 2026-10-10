@@ -2,7 +2,7 @@ import { Plugin } from '@opencode/plugin/tui';
 import type { SessionMessageAssistant, SessionMessageInfo } from '@opencode/client';
 import type { BoxRenderable, Renderable } from '@opentui/core';
 import { createEffect, createMemo, createSignal, For, Show, onCleanup, onMount } from 'solid-js';
-import { cachePercent, compact, duration, finite, fold, mergeReading, reading, speed, total, sumUsage, observeOutput, restoreTiming, timingSample, type TimingSample, type Reading } from './metrics.js';
+import { cachePercent, contextReading, compact, duration, finite, fold, mergeReading, reading, speed, total, sumUsage, observeOutput, restoreTiming, timingSample, type TimingSample, type Reading } from './metrics.js';
 
 import { latestTurnCost, money, parsePrices, sessionCost, type Charge } from './cost.js';
 
@@ -82,19 +82,19 @@ export default Plugin.define({
       } catch { errors.add(id); }
       finally { loading.delete(id); if (!disposed) changed(); }
     }
-    function recordOutput(id:string,messageID:string,type:string,delta:string,time:number) {
+    function recordOutput(id:string,messageID:string,delta:string,time:number) {
       const r=history(id).get(messageID);
       if(!r)return;
-      const next=observeOutput(r,type==='session.reasoning.delta'?'reasoning':type==='session.tool.input.delta'?'tool':'text',delta,time);
+      const next=observeOutput(r,delta,time);
       if(next===r)return;
       history(id).set(messageID,next);
       const sample=timingSample(next)!;
       const saved=timingCache.sessions[id]?.[messageID];
-      if(saved?.first===sample.first && saved.reasoningObserved===sample.reasoningObserved)return;
+      if(saved?.first===sample.first)return;
       void writeTimingCache(draft=>{
         const entries=draft.sessions[id]??(draft.sessions[id]={});
         const old=entries[messageID];
-        entries[messageID]={first:Math.min(old?.first??sample.first,sample.first),reasoningObserved:Boolean(old?.reasoningObserved||sample.reasoningObserved)};
+        entries[messageID]={first:Math.min(old?.first??sample.first,sample.first)};
       }).catch(()=>{});
     }
     const disposers: (() => void)[] = [];
@@ -105,8 +105,12 @@ export default Plugin.define({
         case 'session.step.started': {
           history(id).set(event.data.assistantMessageID,{id:event.data.assistantMessageID,start:event.data.started,toolMs:0}); break;
         }
+        case 'session.tool.input.started': {
+          // DSH counts a name-bearing tool delta as generated output.
+          recordOutput(id,event.data.assistantMessageID,event.data.name,event.created);break;
+        }
         case 'session.text.delta': case 'session.reasoning.delta': case 'session.tool.input.delta': {
-          recordOutput(id,event.data.assistantMessageID,event.type,event.data.delta,event.created);break;
+          recordOutput(id,event.data.assistantMessageID,event.data.delta,event.created);break;
         }
         case 'session.step.streamed': {
           const r=history(id).get(event.data.assistantMessageID);
@@ -142,13 +146,12 @@ export default Plugin.define({
       const entries = [...charges.get(id)?.values() ?? []];
       const t = usageHydrated.has(id) ? sumUsage(entries.map(c=>c.tokens)) : undefined;
       const last = latest.get(id);
-      const selected = session?.parentID ? last?.model ?? session.model : ctx.ui.model.current() ?? last?.model ?? session?.model;
+      // Keep the measured input and its request model together after model switches.
+      const selected = last?.model ?? session?.model;
       const selectedID=selected && ('modelID' in selected ? selected.modelID : selected.id);
       const models = ctx.data.location.model.list(session?.location ?? ctx.location) ?? [];
       const model = models.find(m=>m.providerID===selected?.providerID && m.modelID===selectedID);
-      const used = last?.tokens ? total(last.tokens) : undefined;
-      const limit = model?.limit.context;
-      const percent = finite(used) && finite(limit) && limit>0 ? Math.min(100,Math.round(used/limit*100)) : undefined;
+      const {used,limit,percent} = contextReading(last?.tokens,model?.limit.context);
       const cost = usageHydrated.has(id) ? sessionCost(entries, prices, models) : undefined;
       const lastCost = usageHydrated.has(id) ? latestTurnCost([...timelines.get(id)?.values() ?? []],charges.get(id) ?? new Map(),prices,models) : undefined;
       return {cost,lastCost,timing:fold(history(id).values()),tokens:t,used,limit,percent,modelName:model?.name,historyError:errors.has(id),loading:loading.has(id)};
@@ -209,7 +212,7 @@ export default Plugin.define({
         <Pill sessionID={props.sessionID!} kind="time" label={()=>`${icons.time} ${s()?speed(s()!.timing):'— tok/s'}`}/>
         <Pill sessionID={props.sessionID!} kind="usage" label={()=>`${icons.usage} ${s()?.tokens?compact(total(s()!.tokens!)):'—'} tok · 缓存命中 ${cachePercent(s()?.tokens)}`}/>
         <Pill sessionID={props.sessionID!} kind="cost" label={()=>`${icons.cost} ${money(s()?.cost).replace(/^\$ /,'')}`}/>
-        <Pill sessionID={props.sessionID!} kind="context" label={()=>`${icons.context} ${s()?.percent ?? 0}%`}/>
+        <Pill sessionID={props.sessionID!} kind="context" label={()=>`${icons.context} ${s()?.percent ?? '—'}%`}/>
       </box></Show>;
     }
     function Details() {
@@ -218,7 +221,7 @@ export default Plugin.define({
       const content=createMemo(()=>rows(p().sessionID,p().kind));
       const width=()=>Math.max(12,Math.min(44,ctx.renderer.width-2));
       const height=()=>Math.min(p().kind==='context'?4:content().length+4,ctx.renderer.height-2);
-      const heading=()=>p().kind==='time'?`${icons.time} 会话统计`:p().kind==='usage'?`${icons.usage} Token 用量`:p().kind==='cost'?`${icons.cost} 费用`:`上下文已用 ${s().percent ?? 0}%`;
+      const heading=()=>p().kind==='time'?`${icons.time} 会话统计`:p().kind==='usage'?`${icons.usage} Token 用量`:p().kind==='cost'?`${icons.cost} 费用`:`上下文已用 ${s().percent ?? '—'}%`;
       const summary=()=>p().kind==='usage'?(s().tokens?total(s().tokens!).toLocaleString('en-US')+' tok':'—'):p().kind==='context'?`~${compact(s().used)} / ${compact(s().limit)}`:'';
       const filled=()=>Math.round((s().percent??0)/100*Math.max(0,width()-4));
       let panel:BoxRenderable|undefined;

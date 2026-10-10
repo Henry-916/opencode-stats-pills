@@ -52,7 +52,9 @@ Hover over a group to highlight it, then click to open its details. Press **Esc*
 
 In a main session, the bar sits below the input box. In a child session, it sits above the **Subagents / Shell** panel. Each session has its own totals; child usage is not added to its parent.
 
-Generation speed includes reasoning tokens. `—` means there is no usable timing sample, which can happen with historical or batched responses. The [statistics reference](docs/metrics.md) explains the calculations and data limitations.
+Generation speed includes reasoning tokens. `—` means no eligible sample has both timing and token usage. The [statistics reference](docs/metrics.md) explains the calculations and data limitations.
+
+Output speed uses the DSH generation-phase weighted mean: total output + reasoning tokens divided by total first-output to model-stream-completion time, excluding initial token wait and tool execution.
 
 ## Custom prices
 

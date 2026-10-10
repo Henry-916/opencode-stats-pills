@@ -6,25 +6,25 @@
 
 | Metric | Calculation |
 | --- | --- |
-| Generation speed | Sum of output + reasoning tokens divided by total time from first output to model stream completion, across eligible completed steps |
+| Generation speed | Sum of output + reasoning tokens divided by total first-output → model-stream-completion time across eligible steps; the DSH generation-phase weighted mean |
 | Model time | Sum of step start → model stream completion durations; excludes subsequent tool execution |
 | Average TTFT | Average step start → first output duration across eligible samples |
 | Total tokens | Sum of completed model and compaction request `input + cache.read + cache.write + output + reasoning`, excluding title requests |
 | Cache hit rate | `cache.read / (input + cache.read + cache.write)` |
-| Context usage | Token usage of the latest completed model step divided by the selected model's context window; child sessions use their own model |
+| Context usage | Latest completed request input, including cache reads/writes, divided by that request model's context window; excludes output and reasoning |
 
-The first output can be text, reasoning, or tool arguments. In OpenCode V2, `time.streamed` marks **stream completion**, while `time.completed` may also include tool execution.
+The first output can be text, reasoning, a tool name, or tool arguments. In OpenCode V2, `time.streamed` marks **stream completion**, while `time.completed` may also include tool execution.
 
 ### Data availability
 
-- Samples without reliable timing, with generation spans shorter than 100 ms, or with text timing but unobserved reasoning are excluded from full TPS. `—` means no eligible measurement is available. TTFT is evaluated separately.
-- First output uses nonempty text, reasoning, or tool-argument delta timestamps. Empty block-start notifications do not count. Observed times are saved in durable host plugin storage and restored after TUI restarts.
-- Unobserved historical replies use guarded content timestamps where available. Empty or briefly recorded reasoning blocks cannot recover actual generation timing; missing reliable records remain `—`.
-- Hidden reasoning with token counts but no usable timing can retain observed-output TTFT. Its tokens are not divided by the text-only generation span.
+- Speed has one definition. It excludes initial token wait and tool execution. Tokens and generation durations are summed before division; per-step rates are not averaged arithmetically.
+- There is no 100 ms threshold or multiple-delta requirement. Valid first-output timestamps and usage participate; missing first output, missing usage or invalid times contribute neither tokens nor time. Zero-duration samples retain their tokens in mixed aggregates; total generation duration must be positive. No eligible samples means `—`.
+- First output uses nonempty text, reasoning, tool-name or tool-argument timestamps; empty block starts do not count. Observed times are persisted, with historical timestamps as a supplementary source.
+- Coalescing or delayed reasoning summaries can shorten measured generation spans and produce high TPS on short replies. Rates are not capped or replaced with whole-request averages. Use longer replies to check stability; the reading does not measure the precise internal generation time of every token.
 - Tokens and cost use paginated request history, deduplicated by message ID, excluding title generation. Compaction requests with usage records remain included. Speed uses eligible assistant steps. Tokens and cost show `—` until the full history is loaded.
 - External subagents that do not report usage to OpenCode cannot provide accurate token statistics through this plugin.
 - Cache values normalized to zero by the host cannot distinguish missing upstream reporting from actual cache misses.
-- Context is a recent-request reading, not cumulative session usage. A system/tools/messages breakdown is not available.
+- Context is the latest request’s prompt-side input paired with its own model capacity; missing readings show `—`, not `0%`. DSH additionally projects subsequent surface changes. This plugin does not reproduce that projection or the system/tools/messages breakdown.
 
 ## Cost
 

@@ -16,9 +16,17 @@ var input = (t) => t.input + t.cache.read + t.cache.write;
 var total = (t) => input(t) + output(t);
 function cachePercent(t) {
   if (!t || !finite(t.cache?.read) || !finite(t.cache?.write) || input(t) <= 0) return "\u2014";
-  const ratio = t.cache.read / input(t) * 100;
-  if (ratio > 99.5 && ratio < 100) return "<100%";
-  return `${Math.round(ratio)}%`;
+  const prompt = input(t), cached = t.cache.read;
+  if (!Number.isSafeInteger(prompt) || !Number.isSafeInteger(cached) || cached > prompt) return "\u2014";
+  const denominator = BigInt(prompt), numerator = BigInt(cached) * 100n;
+  for (let places = 0, scale = 1n; places <= 16; places++, scale *= 10n) {
+    const rounded = (numerator * scale * 2n + denominator) / (denominator * 2n);
+    if (cached === prompt || rounded < 100n * scale) {
+      const digits = rounded.toString().padStart(places + 1, "0");
+      return `${places ? digits.slice(0, -places) + "." + digits.slice(-places) : digits}%`;
+    }
+  }
+  return "\u2014";
 }
 function compact(n) {
   if (!finite(n)) return "\u2014";
@@ -27,21 +35,26 @@ function compact(n) {
   return String(Math.round(n));
 }
 function duration(ms) {
-  return finite(ms) ? `${(ms / 1e3).toFixed(1)}s` : "\u2014";
+  if (!finite(ms)) return "\u2014";
+  if (ms < 6e4) return `${(ms / 1e3).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1e3);
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 function fold(readings) {
   const result = { decodeMs: 0, decodeTokens: 0, modelMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, unmeasured: 0 };
   for (const r of readings) {
-    result.toolMs += r.toolMs;
-    if (!finite(r.end) || !finite(r.streamEnd)) continue;
-    result.modelMs += Math.max(0, r.streamEnd - r.start);
+    if (finite(r.toolMs)) result.toolMs += r.toolMs;
+    if (!finite(r.end)) continue;
+    if (!finite(r.start) || !finite(r.streamEnd) || r.streamEnd < r.start || r.end < r.streamEnd) {
+      result.unmeasured++;
+      continue;
+    }
+    result.modelMs += r.streamEnd - r.start;
     if (finite(r.first) && r.first >= r.start && r.first <= r.streamEnd) {
       result.ttftMs += r.first - r.start;
       result.ttftSteps++;
-      const span = r.streamEnd - r.first;
-      const usable = (!r.batched || r.observed && r.reasoningObserved) && !(r.observed && r.tokens?.reasoning && !r.reasoningObserved);
-      if (usable && span >= 100 && r.tokens) {
-        result.decodeMs += span;
+      if (r.tokens && finite(r.tokens.output) && finite(r.tokens.reasoning) && finite(output(r.tokens))) {
+        result.decodeMs += r.streamEnd - r.first;
         result.decodeTokens += output(r.tokens);
       } else result.unmeasured++;
     } else result.unmeasured++;
@@ -49,7 +62,7 @@ function fold(readings) {
   return result;
 }
 function speed(t) {
-  return t.decodeMs > 0 ? `${(t.decodeTokens / (t.decodeMs / 1e3)).toFixed(1)} tok/s` : "\u2014 tok/s";
+  return t.decodeMs > 0 && t.decodeTokens > 0 && finite(t.decodeMs) && finite(t.decodeTokens) ? `${(t.decodeTokens / (t.decodeMs / 1e3)).toFixed(1)} tok/s` : "\u2014 tok/s";
 }
 function reading(message) {
   if (message.type !== "assistant") return void 0;
@@ -57,32 +70,31 @@ function reading(message) {
     if (c.type !== "tool") return sum;
     return sum + (finite(c.time.ran) && finite(c.time.completed) ? Math.max(0, c.time.completed - c.time.ran) : 0);
   }, 0);
-  const reasoningParts = message.content.filter((c) => c.type === "reasoning").filter((c) => c.text?.length);
-  const batched = Boolean(message.tokens?.reasoning && !reasoningParts.some((c) => finite(c.time?.created) && finite(c.time?.completed) && c.time.completed - c.time.created >= 100));
-  return { batched, id: message.id, start: message.time.created, first: firstContentTime(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
+  return { id: message.id, start: message.time.created, first: firstContentTime(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
 }
 function firstContentTime(message) {
   if (message.content[0]?.type === "text" && message.content[0].text.trim()) return void 0;
-  const times = message.content.flatMap((c) => c.type === "reasoning" && c.text?.length && finite(c.time?.created) && finite(c.time?.completed) && c.time.completed - c.time.created >= 100 ? [c.time.created] : c.type === "tool" && finite(c.time.created) ? [c.time.created] : []);
+  const times = message.content.flatMap((c) => c.type === "reasoning" && c.text?.length && finite(c.time?.created) && finite(c.time?.completed) && c.time.completed > c.time.created ? [c.time.created] : c.type === "tool" && c.name?.length && finite(c.time.created) ? [c.time.created] : []);
   return times.length ? Math.min(...times) : void 0;
 }
 function mergeReading(old, next) {
   const observed = [old, next].filter((r) => Boolean(r?.observed));
   const times = (observed.length ? observed : [old, next]).map((r) => r?.first).filter(finite);
-  return { ...old, ...next, first: times.length ? Math.min(...times) : void 0, observed: observed.length > 0, reasoningObserved: Boolean(old?.reasoningObserved || next.reasoningObserved), streamEnd: next.streamEnd ?? old?.streamEnd, end: next.end ?? old?.end, tokens: next.tokens ?? old?.tokens };
+  return { ...old, ...next, first: times.length ? Math.min(...times) : void 0, observed: observed.length > 0, streamEnd: next.streamEnd ?? old?.streamEnd, end: next.end ?? old?.end, tokens: next.tokens ?? old?.tokens };
 }
-function observeOutput(r, kind, delta, time) {
+function observeOutput(r, delta, time) {
   if (!delta.length || !finite(time) || time < r.start || finite(r.streamEnd) && time > r.streamEnd) return r;
-  return { ...r, first: r.observed && finite(r.first) ? Math.min(r.first, time) : time, observed: true, reasoningObserved: Boolean(r.reasoningObserved || kind === "reasoning") };
+  const first = r.observed && finite(r.first) ? Math.min(r.first, time) : time;
+  return r.observed && r.first === first ? r : { ...r, first, observed: true };
 }
 function timingSample(r) {
-  return r.observed && finite(r.first) ? { first: r.first, reasoningObserved: Boolean(r.reasoningObserved) } : void 0;
+  return r.observed && finite(r.first) ? { first: r.first } : void 0;
 }
 function restoreTiming(r, sample) {
   if (!sample || typeof sample !== "object") return r;
   const s = sample;
-  if (!finite(s.first) || typeof s.reasoningObserved !== "boolean" || s.first < r.start || finite(r.streamEnd) && s.first > r.streamEnd) return r;
-  return mergeReading(r, { ...r, first: s.first, observed: true, reasoningObserved: s.reasoningObserved });
+  if (!finite(s.first) || s.first < r.start || finite(r.streamEnd) && s.first > r.streamEnd) return r;
+  return mergeReading(r, { ...r, first: s.first, observed: true });
 }
 function sumUsage(usages) {
   const sum = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
@@ -95,6 +107,12 @@ function sumUsage(usages) {
     sum.cache.write += t.cache.write;
   }
   return sum;
+}
+function contextReading(tokens, limit) {
+  const used = tokens && [tokens.input, tokens.cache?.read, tokens.cache?.write].every(finite) ? input(tokens) : void 0;
+  const capacity = finite(limit) && limit > 0 ? limit : void 0;
+  const percent = finite(used) && capacity ? Math.min(100, Math.round(used / capacity * 100)) : void 0;
+  return { used, limit: capacity, percent };
 }
 
 // src/cost.ts
@@ -264,21 +282,20 @@ var tui_default = Plugin.define({
         if (!disposed) changed();
       }
     }
-    function recordOutput(id, messageID, type, delta, time) {
+    function recordOutput(id, messageID, delta, time) {
       const r = history(id).get(messageID);
       if (!r) return;
-      const next = observeOutput(r, type === "session.reasoning.delta" ? "reasoning" : type === "session.tool.input.delta" ? "tool" : "text", delta, time);
+      const next = observeOutput(r, delta, time);
       if (next === r) return;
       history(id).set(messageID, next);
       const sample = timingSample(next);
       const saved = timingCache.sessions[id]?.[messageID];
-      if (saved?.first === sample.first && saved.reasoningObserved === sample.reasoningObserved) return;
+      if (saved?.first === sample.first) return;
       void writeTimingCache((draft) => {
         const entries = draft.sessions[id] ?? (draft.sessions[id] = {});
         const old = entries[messageID];
         entries[messageID] = {
-          first: Math.min(old?.first ?? sample.first, sample.first),
-          reasoningObserved: Boolean(old?.reasoningObserved || sample.reasoningObserved)
+          first: Math.min(old?.first ?? sample.first, sample.first)
         };
       }).catch(() => {
       });
@@ -298,10 +315,14 @@ var tui_default = Plugin.define({
           });
           break;
         }
+        case "session.tool.input.started": {
+          recordOutput(id, event.data.assistantMessageID, event.data.name, event.created);
+          break;
+        }
         case "session.text.delta":
         case "session.reasoning.delta":
         case "session.tool.input.delta": {
-          recordOutput(id, event.data.assistantMessageID, event.type, event.data.delta, event.created);
+          recordOutput(id, event.data.assistantMessageID, event.data.delta, event.created);
           break;
         }
         case "session.step.streamed": {
@@ -385,13 +406,15 @@ var tui_default = Plugin.define({
       const entries = [...charges.get(id)?.values() ?? []];
       const t = usageHydrated.has(id) ? sumUsage(entries.map((c) => c.tokens)) : void 0;
       const last = latest.get(id);
-      const selected = session?.parentID ? last?.model ?? session.model : ctx.ui.model.current() ?? last?.model ?? session?.model;
+      const selected = last?.model ?? session?.model;
       const selectedID = selected && ("modelID" in selected ? selected.modelID : selected.id);
       const models = ctx.data.location.model.list(session?.location ?? ctx.location) ?? [];
       const model = models.find((m) => m.providerID === selected?.providerID && m.modelID === selectedID);
-      const used = last?.tokens ? total(last.tokens) : void 0;
-      const limit = model?.limit.context;
-      const percent = finite(used) && finite(limit) && limit > 0 ? Math.min(100, Math.round(used / limit * 100)) : void 0;
+      const {
+        used,
+        limit,
+        percent
+      } = contextReading(last?.tokens, model?.limit.context);
       const cost = usageHydrated.has(id) ? sessionCost(entries, prices, models) : void 0;
       const lastCost = usageHydrated.has(id) ? latestTurnCost([...timelines.get(id)?.values() ?? []], charges.get(id) ?? /* @__PURE__ */ new Map(), prices, models) : void 0;
       return {
@@ -522,7 +545,7 @@ var tui_default = Plugin.define({
               return props.sessionID;
             },
             kind: "context",
-            label: () => `${icons.context} ${s()?.percent ?? 0}%`
+            label: () => `${icons.context} ${s()?.percent ?? "\u2014"}%`
           }), null);
           _$effect((_$p) => _$setProp(_el$3, "marginBottom", props.sessionDock ? 1 : 0, _$p));
           return _el$3;
@@ -535,7 +558,7 @@ var tui_default = Plugin.define({
       const content = createMemo(() => rows(p().sessionID, p().kind));
       const width = () => Math.max(12, Math.min(44, ctx.renderer.width - 2));
       const height = () => Math.min(p().kind === "context" ? 4 : content().length + 4, ctx.renderer.height - 2);
-      const heading = () => p().kind === "time" ? `${icons.time} \u4F1A\u8BDD\u7EDF\u8BA1` : p().kind === "usage" ? `${icons.usage} Token \u7528\u91CF` : p().kind === "cost" ? `${icons.cost} \u8D39\u7528` : `\u4E0A\u4E0B\u6587\u5DF2\u7528 ${s().percent ?? 0}%`;
+      const heading = () => p().kind === "time" ? `${icons.time} \u4F1A\u8BDD\u7EDF\u8BA1` : p().kind === "usage" ? `${icons.usage} Token \u7528\u91CF` : p().kind === "cost" ? `${icons.cost} \u8D39\u7528` : `\u4E0A\u4E0B\u6587\u5DF2\u7528 ${s().percent ?? "\u2014"}%`;
       const summary = () => p().kind === "usage" ? s().tokens ? total(s().tokens).toLocaleString("en-US") + " tok" : "\u2014" : p().kind === "context" ? `~${compact(s().used)} / ${compact(s().limit)}` : "";
       const filled = () => Math.round((s().percent ?? 0) / 100 * Math.max(0, width() - 4));
       let panel;
