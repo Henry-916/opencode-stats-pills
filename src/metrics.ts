@@ -2,8 +2,9 @@ import type { SessionMessageInfo, TokenUsageInfo } from '@opencode/client';
 
 // first: earliest output of any kind (TTFT). textFirst/textLead: time and size
 // of the first text batch. chars/toolFirst: the visible output behind
-// tokens.output and when its first tool call began.
-export type Reading = { id: string; start: number; first?: number; textFirst?: number; textLead?: number; chars?: number; toolFirst?: number; streamEnd?: number; end?: number; tokens?: TokenUsageInfo; observed?: boolean; toolMs: number };
+// tokens.output and when its first tool call began. reasonSpans: the
+// intervals over which reasoning text streamed, one per block.
+export type Reading = { id: string; start: number; first?: number; textFirst?: number; textLead?: number; chars?: number; toolFirst?: number; reasonSpans?: [number, number][]; streamEnd?: number; end?: number; tokens?: TokenUsageInfo; observed?: boolean; toolMs: number };
 export type Timing = { decodeMs: number; decodeTokens: number; modelMs: number; toolMs: number; ttftMs: number; ttftSteps: number; unmeasured: number };
 export const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 export const output = (t: TokenUsageInfo) => t.output + t.reasoning;
@@ -50,22 +51,53 @@ export function fold(readings: Iterable<Reading>): Timing {
       result.ttftMs += r.first - r.start;
       result.ttftSteps++;
     }
-    const share = streamedShare(r);
-    if (share === undefined) { result.unmeasured++; continue; }
-    result.decodeMs += r.streamEnd - r.textFirst!;
-    result.decodeTokens += r.tokens!.output * share;
+    const span = streamedSpan(r);
+    if (!span) { result.unmeasured++; continue; }
+    result.decodeMs += r.streamEnd - span.from;
+    result.decodeTokens += span.tokens;
   }
   return result;
 }
-// Speed pairs tokens with the span they were generated in. Hidden reasoning
-// and tool calls that arrive whole are produced before anything is observed,
-// so only output streamed after the first text batch is counted, as a share
-// of tokens.output by characters. Steps without such a span return undefined.
-function streamedShare(r: Reading): number | undefined {
-  if (!finite(r.textFirst) || !finite(r.streamEnd) || r.textFirst < r.start || r.textFirst >= r.streamEnd) return undefined;
-  if (finite(r.toolFirst) && r.toolFirst < r.textFirst) return undefined;
-  if (!r.tokens || !finite(r.tokens.output) || r.tokens.output <= 0 || !finite(r.chars) || r.chars <= 0) return undefined;
-  return Math.max(0, 1 - (r.textLead ?? 0) / r.chars);
+// Speed pairs tokens with the span they were generated in. Reasoning that
+// never surfaces and tool calls that arrive whole are produced before anything
+// is observed, so the span opens at streamed reasoning or the first text
+// batch, whichever came first. An opening text batch predates the span and is
+// deducted from tokens.output by characters. Steps without such a span return
+// undefined.
+function streamedSpan(r: Reading): { from: number; tokens: number } | undefined {
+  if (!finite(r.streamEnd) || !r.tokens || !finite(r.tokens.output) || r.tokens.output <= 0) return undefined;
+  const seen = reasoningStream(r);
+  const opens = [seen?.from, r.textFirst].filter(finite);
+  if (!opens.length) return undefined;
+  const from = Math.min(...opens);
+  if (from < r.start || from >= r.streamEnd) return undefined;
+  if (finite(r.toolFirst) && r.toolFirst < from) return undefined;
+  let tokens = r.tokens.output;
+  if (r.textFirst === from) {
+    if (!finite(r.chars) || r.chars <= 0) return undefined;
+    tokens *= Math.max(0, 1 - (r.textLead ?? 0) / r.chars);
+  }
+  if (seen) tokens += r.tokens.reasoning * (seen.from > from ? 1 : seen.share);
+  return { from, tokens };
+}
+// Reasoning text is a summary that trails the thinking it describes, so its
+// characters do not track tokens. The thinking is taken as running from the
+// step's start to the end of its last block and counts for the share the
+// blocks cover, and only when that share is at least half: a burst at the end
+// shows nothing being generated, and neither does the gap between two bursts.
+function reasoningStream(r: Reading): { from: number; share: number } | undefined {
+  if (!r.reasonSpans?.length || !finite(r.streamEnd) || !finite(r.tokens?.reasoning)) return undefined;
+  const spans = [...r.reasonSpans].sort((a, b) => a[0] - b[0]);
+  const from = spans[0]![0];
+  if (!finite(from) || from < r.start) return undefined;
+  let covered = 0, last = from;
+  for (const [begin, finish] of spans) {
+    const end = Math.min(finish, r.streamEnd);
+    covered += Math.max(0, end - Math.max(begin, last));
+    last = Math.max(last, end);
+  }
+  const total = last - r.start;
+  return covered > 0 && covered * 2 >= total ? { from, share: covered / total } : undefined;
 }
 export function speed(t: Timing): string {
   return t.decodeMs > 0 && t.decodeTokens > 0 && finite(t.decodeMs) && finite(t.decodeTokens) ?`${(t.decodeTokens/(t.decodeMs/1000)).toFixed(1)} tok/s`:'— tok/s';
@@ -76,7 +108,7 @@ export function reading(message: SessionMessageInfo): Reading | undefined {
     if (c.type !== 'tool') return sum;
     return sum + (finite(c.time.ran) && finite(c.time.completed) ? Math.max(0, c.time.completed - c.time.ran) : 0);
   }, 0);
-  return { id: message.id, start: message.time.created, first: firstContentTime(message), ...outputShape(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
+  return { id: message.id, start: message.time.created, first: firstContentTime(message), ...outputShape(message), ...reasoningSpans(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
 
 }
 
@@ -93,6 +125,13 @@ function outputShape(message: Extract<SessionMessageInfo, {type:'assistant'}>): 
     if (finite(c.time?.created)) tools.push(c.time.created);
   }
   return chars ? {chars, ...(tools.length ? {toolFirst: Math.min(...tools)} : {})} : {};
+}
+
+// Reasoning blocks keep their times in history, unlike text. An empty or
+// instantaneous block is a notification, not a stream.
+function reasoningSpans(message: Extract<SessionMessageInfo, {type:'assistant'}>): Pick<Reading, 'reasonSpans'> {
+  const spans=message.content.flatMap((c): [number, number][]=>c.type==='reasoning' && c.text?.length && finite(c.time?.created) && finite(c.time?.completed) && c.time.completed>c.time.created?[[c.time.created,c.time.completed]]:[]);
+  return spans.length?{reasonSpans:spans}:{};
 }
 
 // V2 streamed is END of the model stream, not its first token. completed may

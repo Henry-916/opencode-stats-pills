@@ -54,21 +54,45 @@ function fold(readings) {
       result.ttftMs += r.first - r.start;
       result.ttftSteps++;
     }
-    const share = streamedShare(r);
-    if (share === void 0) {
+    const span = streamedSpan(r);
+    if (!span) {
       result.unmeasured++;
       continue;
     }
-    result.decodeMs += r.streamEnd - r.textFirst;
-    result.decodeTokens += r.tokens.output * share;
+    result.decodeMs += r.streamEnd - span.from;
+    result.decodeTokens += span.tokens;
   }
   return result;
 }
-function streamedShare(r) {
-  if (!finite(r.textFirst) || !finite(r.streamEnd) || r.textFirst < r.start || r.textFirst >= r.streamEnd) return void 0;
-  if (finite(r.toolFirst) && r.toolFirst < r.textFirst) return void 0;
-  if (!r.tokens || !finite(r.tokens.output) || r.tokens.output <= 0 || !finite(r.chars) || r.chars <= 0) return void 0;
-  return Math.max(0, 1 - (r.textLead ?? 0) / r.chars);
+function streamedSpan(r) {
+  if (!finite(r.streamEnd) || !r.tokens || !finite(r.tokens.output) || r.tokens.output <= 0) return void 0;
+  const seen = reasoningStream(r);
+  const opens = [seen?.from, r.textFirst].filter(finite);
+  if (!opens.length) return void 0;
+  const from = Math.min(...opens);
+  if (from < r.start || from >= r.streamEnd) return void 0;
+  if (finite(r.toolFirst) && r.toolFirst < from) return void 0;
+  let tokens = r.tokens.output;
+  if (r.textFirst === from) {
+    if (!finite(r.chars) || r.chars <= 0) return void 0;
+    tokens *= Math.max(0, 1 - (r.textLead ?? 0) / r.chars);
+  }
+  if (seen) tokens += r.tokens.reasoning * (seen.from > from ? 1 : seen.share);
+  return { from, tokens };
+}
+function reasoningStream(r) {
+  if (!r.reasonSpans?.length || !finite(r.streamEnd) || !finite(r.tokens?.reasoning)) return void 0;
+  const spans = [...r.reasonSpans].sort((a, b) => a[0] - b[0]);
+  const from = spans[0][0];
+  if (!finite(from) || from < r.start) return void 0;
+  let covered = 0, last = from;
+  for (const [begin, finish] of spans) {
+    const end = Math.min(finish, r.streamEnd);
+    covered += Math.max(0, end - Math.max(begin, last));
+    last = Math.max(last, end);
+  }
+  const total2 = last - r.start;
+  return covered > 0 && covered * 2 >= total2 ? { from, share: covered / total2 } : void 0;
 }
 function speed(t) {
   return t.decodeMs > 0 && t.decodeTokens > 0 && finite(t.decodeMs) && finite(t.decodeTokens) ? `${(t.decodeTokens / (t.decodeMs / 1e3)).toFixed(1)} tok/s` : "\u2014 tok/s";
@@ -79,7 +103,7 @@ function reading(message) {
     if (c.type !== "tool") return sum;
     return sum + (finite(c.time.ran) && finite(c.time.completed) ? Math.max(0, c.time.completed - c.time.ran) : 0);
   }, 0);
-  return { id: message.id, start: message.time.created, first: firstContentTime(message), ...outputShape(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
+  return { id: message.id, start: message.time.created, first: firstContentTime(message), ...outputShape(message), ...reasoningSpans(message), streamEnd: message.time.streamed, end: message.time.completed, tokens: message.tokens, toolMs };
 }
 function outputShape(message) {
   let chars = 0;
@@ -92,6 +116,10 @@ function outputShape(message) {
     if (finite(c.time?.created)) tools.push(c.time.created);
   }
   return chars ? { chars, ...tools.length ? { toolFirst: Math.min(...tools) } : {} } : {};
+}
+function reasoningSpans(message) {
+  const spans = message.content.flatMap((c) => c.type === "reasoning" && c.text?.length && finite(c.time?.created) && finite(c.time?.completed) && c.time.completed > c.time.created ? [[c.time.created, c.time.completed]] : []);
+  return spans.length ? { reasonSpans: spans } : {};
 }
 function firstContentTime(message) {
   if (message.content[0]?.type === "text" && message.content[0].text.trim()) return void 0;

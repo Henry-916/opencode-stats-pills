@@ -4,14 +4,16 @@ import { cachePercent, contextReading, duration, total, fold, speed, compact, re
 const tokens = {input:100,output:60,reasoning:40,cache:{read:300,write:100}};
 test('disjoint input buckets and reasoning are counted once',()=>{assert.equal(total(tokens),600);assert.equal(cachePercent(tokens),'60%');});
 test('missing usage is distinct from a reported cache miss',()=>{assert.equal(cachePercent(),'—');assert.equal(cachePercent({...tokens,cache:{read:0,write:0}}),'0%');});
-test('speed excludes TTFT, tool time and reasoning tokens, weighted by time',()=>{const t=fold([{id:'1',start:1000,first:2000,textFirst:2000,chars:100,observed:true,streamEnd:4000,end:11000,tokens,toolMs:7000},{id:'2',start:10000,first:11000,textFirst:11000,chars:100,observed:true,streamEnd:19000,end:19000,tokens,toolMs:0}]);assert.equal(speed(t),'12.0 tok/s');assert.equal(t.modelMs,12000);assert.equal(t.ttftMs/t.ttftSteps,1000);assert.equal(t.toolMs,7000);});
+test('speed excludes TTFT, tool time and unstreamed reasoning, weighted by time',()=>{const t=fold([{id:'1',start:1000,first:2000,textFirst:2000,chars:100,observed:true,streamEnd:4000,end:11000,tokens,toolMs:7000},{id:'2',start:10000,first:11000,textFirst:11000,chars:100,observed:true,streamEnd:19000,end:19000,tokens,toolMs:0}]);assert.equal(speed(t),'12.0 tok/s');assert.equal(t.modelMs,12000);assert.equal(t.ttftMs/t.ttftSteps,1000);assert.equal(t.toolMs,7000);});
 test('a reply that arrives as one batch has no measurable span',()=>{const t=fold([observeOutput({id:'1',start:0,streamEnd:1015,end:1015,chars:5,tokens,toolMs:0},'hello',1000,true)]);assert.equal(speed(t),'— tok/s');assert.equal(t.ttftMs,1000);assert.equal(t.decodeTokens,0);});
 test('partial cache hits never round up to full hit',()=>{assert.equal(cachePercent({...tokens,input:1,cache:{read:9999,write:0}}),'99.99%');});
 test('formatting handles unavailable and large counts',()=>{assert.equal(compact(),'—');assert.equal(compact(12946),'12.9K');});
 
-test('V2 stream completion excludes tools; a reasoning start gives TTFT but no speed',()=>{
+test('V2 stream completion excludes tools; a stored reasoning stream gives TTFT and speed',()=>{
   const message={id:'v2',type:'assistant',time:{created:0,streamed:11000,completed:311000},tokens:{...tokens,output:600,reasoning:400},content:[{type:'reasoning',text:'thinking',time:{created:1000,completed:10900}},{type:'tool',name:'shell',time:{created:7000,ran:11000,completed:311000}}]} as any;
-  const r=reading(message)!;const t=fold([r]);assert.equal(r.first,1000);assert.equal(t.modelMs,11000);assert.equal(t.toolMs,300000);assert.equal(t.ttftMs,1000);assert.equal(speed(t),'— tok/s');
+  const r=reading(message)!;const t=fold([r]);assert.equal(r.first,1000);assert.equal(t.modelMs,11000);assert.equal(t.toolMs,300000);assert.equal(t.ttftMs,1000);
+  // 9.9s of the 10.9s before the reasoning ended were streamed: 600 + 400 * 9900/10900 tokens over 10s.
+  assert.equal(speed(t),'96.3 tok/s');
 });
 test('cached projections cannot overwrite the first live text batch',()=>{
   const textTokens={...tokens,output:100,reasoning:0};
@@ -42,7 +44,7 @@ test('empty starts and deltas cannot supply a first token',()=>{
   assert.equal(observeOutput(r,'hello',-1),r);
 });
 
-test('observed reasoning gives TTFT; speed starts at the first text batch',()=>{
+test('reasoning that left no text gives TTFT; speed starts at the first text batch',()=>{
   const r={id:'live',start:0,toolMs:0};
   const live=observeOutput(observeOutput(observeOutput(r,'thinking',1000),'more',2000),'answ',6000,true);
   const projection=reading({id:'live',type:'assistant',time:{created:0,streamed:11000,completed:12000},tokens,content:[{type:'reasoning',text:'',time:{created:10800,completed:10809}},{type:'text',text:'answer '.repeat(10)}]} as any)!;
@@ -147,7 +149,9 @@ test('output shape counts the text and tool calls behind tokens.output',()=>{
   const r=reading({id:'shape',type:'assistant',time:{created:0,streamed:2000,completed:2100},tokens,content:[{type:'reasoning',text:'hidden plan',time:{created:100,completed:900}},{type:'text',text:'abcde'},{type:'tool',name:'read',state:{status:'running',input:{a:1},metadata:{}},time:{created:1500}},{type:'tool',name:'glob',state:{status:'streaming',input:'{"b"'},time:{created:1200}}]} as any)!;
   assert.equal(r.chars,5+4+7+4+4);
   assert.equal(r.toolFirst,1200);
-  assert.equal(reading({id:'placeholder',type:'assistant',time:{created:0},content:[]} as any)!.chars,undefined);
+  assert.deepEqual(r.reasonSpans,[[100,900]]);
+  const placeholder=reading({id:'placeholder',type:'assistant',time:{created:0},content:[]} as any)!;
+  assert.equal(placeholder.chars,undefined);assert.equal(placeholder.reasonSpans,undefined);
 });
 
 test('hidden reasoning and whole tool calls no longer inflate a real Gemini session',()=>{
@@ -173,4 +177,53 @@ test('invalid timing, counts and ordering cannot produce a speed',()=>{
   for (const patch of [{start:NaN},{start:-1},{streamEnd:999},{end:1999},{textFirst:999},{textFirst:2001},{textFirst:undefined},{toolFirst:1400},{chars:0},{chars:NaN},{tokens:{...tokens,output:NaN}},{tokens:{...tokens,output:-1}},{tokens:{...tokens,output:0}}]) {
     assert.equal(speed(fold([{...r,...patch}])),'— tok/s');
   }
+});
+
+test('streamed reasoning opens the span and counts for the share it covers',()=>{
+  // Shaped after ses_ed752b96c step 23 on the native Gemini route: the first
+  // summary arrived 11.5s in, then streamed until the whole tool call.
+  const think=reading({id:'think',type:'assistant',time:{created:0,streamed:68344,completed:68409},tokens:{...tokens,output:27,reasoning:11835},content:[{type:'reasoning',text:'x'.repeat(11615),time:{created:11501,completed:68254}},{type:'tool',name:'grep',state:{status:'completed',input:{pattern:'fold'}},time:{created:68262,ran:68344,completed:68409}}]} as any)!;
+  const t=fold([think]);
+  assert.equal(speed(t),'173.6 tok/s');assert.equal(t.ttftMs,11501);assert.equal(t.unmeasured,0);
+  // Step 49: the same, followed by streamed text that counts in full.
+  const answer=observeOutput(reading({id:'answer',type:'assistant',time:{created:0,streamed:42869,completed:42869},tokens:{...tokens,output:1676,reasoning:4436},content:[{type:'reasoning',text:'x'.repeat(4830),time:{created:8187,completed:31653}},{type:'text',text:'x'.repeat(3740)}]} as any)!,'x'.repeat(20),31767,true);
+  assert.equal(speed(fold([answer])),'143.1 tok/s');
+});
+
+test('a reasoning burst at the end of a step shows nothing being generated',()=>{
+  // Step 38 of the same session: 250 reasoning tokens surfaced within 13ms,
+  // 4.9s in. Counting them from there would read 3,055 tok/s.
+  const burst=reading({id:'burst',type:'assistant',time:{created:0,streamed:5006,completed:5038},tokens:{...tokens,output:28,reasoning:250},content:[{type:'reasoning',text:'x'.repeat(302),time:{created:4915,completed:4928}},{type:'tool',name:'grep',state:{status:'completed',input:{pattern:'fold'}},time:{created:4932,ran:5006,completed:5038}}]} as any)!;
+  const t=fold([burst]);
+  assert.equal(speed(t),'— tok/s');assert.equal(t.unmeasured,1);assert.equal(t.ttftMs,4915);
+});
+
+test('reasoning seen for less than half of its time leaves the text measurement alone',()=>{
+  // Shaped after ses_ed7529adf step 2 (gpt-6.1-sol): 1.2s of summary after a 2.5s wait.
+  const message={id:'brief',type:'assistant',time:{created:0,streamed:9127,completed:9127},tokens:{...tokens,output:449,reasoning:19},content:[{type:'reasoning',text:'x'.repeat(431),time:{created:2487,completed:3659}},{type:'text',text:'x'.repeat(918)},{type:'tool',name:'read',state:{status:'completed',input:{filePath:'a'}},time:{created:8680,ran:9051,completed:9127}}]} as any;
+  const t=fold([observeOutput(reading(message)!,'x'.repeat(12),3787,true)]);
+  assert.equal(speed(t),'83.0 tok/s');assert.equal(t.decodeMs,9127-3787);
+});
+
+test('reasoning spans reject invalid ranges and clamp to the stream end',()=>{
+  const r={id:'r',start:0,first:1000,reasonSpans:[[1000,9000]] as [number,number][],streamEnd:10000,end:10000,tokens:{...tokens,output:100,reasoning:900},toolMs:0};
+  assert.equal(speed(fold([r])),'100.0 tok/s');
+  assert.equal(speed(fold([{...r,reasonSpans:[[1000,20000]]}])),'101.1 tok/s');
+  for (const patch of [{reasonSpans:undefined},{reasonSpans:[]},{reasonSpans:[[1000,1000]]},{reasonSpans:[[1000,1900]]},{reasonSpans:[[-1,9000]]},{reasonSpans:[[1000,NaN]]},{start:2000},{toolFirst:500},{tokens:{...r.tokens,reasoning:NaN}},{tokens:{...r.tokens,output:0}}]) {
+    assert.equal(speed(fold([{...r,...patch} as any])),'— tok/s');
+  }
+});
+
+test('separate reasoning blocks count for what they cover, not the gap between them',()=>{
+  // Two 10ms bursts 8s apart are 20ms of stream, not 8s of it.
+  const bursts=reading({id:'bursts',type:'assistant',time:{created:0,streamed:10000,completed:10000},tokens:{...tokens,output:10,reasoning:1000},content:[{type:'reasoning',text:'first',time:{created:1000,completed:1010}},{type:'reasoning',text:'second',time:{created:9000,completed:9010}},{type:'tool',name:'read',state:{status:'completed',input:{}},time:{created:9500,ran:10000,completed:10000}}]} as any)!;
+  const t=fold([bursts]);
+  assert.deepEqual(bursts.reasonSpans,[[1000,1010],[9000,9010]]);
+  assert.equal(speed(t),'— tok/s');assert.equal(t.unmeasured,1);
+  const r={id:'r',start:0,first:1000,streamEnd:10000,end:10000,tokens:{...tokens,output:100,reasoning:900},toolMs:0};
+  // Adjacent and overlapping blocks are one stream, in any order.
+  assert.equal(speed(fold([{...r,reasonSpans:[[1000,5000],[5000,9000]]}])),'100.0 tok/s');
+  assert.equal(speed(fold([{...r,reasonSpans:[[4000,9000],[1000,6000]]}])),'100.0 tok/s');
+  // 6s covered of the 9s up to the last block: 100 + 900 * 6/9 tokens over 9s.
+  assert.equal(speed(fold([{...r,reasonSpans:[[1000,4000],[6000,9000]]}])),'77.8 tok/s');
 });

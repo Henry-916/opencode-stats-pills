@@ -112,7 +112,8 @@ export default Plugin.define({
           recordOutput(id,event.data.assistantMessageID,event.data.name,event.created);break;
         }
         case 'session.text.delta': case 'session.reasoning.delta': case 'session.tool.input.delta': {
-          // Only text opens the speed window; any payload still marks TTFT.
+          // Text needs its first batch captured here; reasoning times come from
+          // the message itself. Any payload still marks TTFT.
           recordOutput(id,event.data.assistantMessageID,event.data.delta,event.created,event.type==='session.text.delta');break;
         }
         case 'session.step.streamed': {

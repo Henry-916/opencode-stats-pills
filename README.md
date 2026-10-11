@@ -52,9 +52,9 @@ Hover over a group to highlight it, then click to open its details. Press **Esc*
 
 In a main session, the bar sits below the input box. In a child session, it sits above the **Subagents / Shell** panel. Each session has its own totals; child usage is not added to its parent.
 
-Generation speed excludes reasoning tokens. `—` means no streamed text has been measured yet, such as tool-only steps or a reply delivered in a single batch. The [statistics reference](docs/metrics.md) explains the calculations and data limitations.
+`—` means no streamed output has been measured yet, such as steps with only tool calls and brief reasoning, or a reply delivered in a single batch. The [statistics reference](docs/metrics.md) explains the calculations and data limitations.
 
-Output speed counts only output whose generation can be observed: output tokens generated after text starts streaming, divided by total first-text-batch to model-stream-completion time. It excludes initial token wait, hidden reasoning, and tool execution.
+Output speed counts only output whose generation can be observed: tokens generated between the start of streamed reasoning or the first text batch and model stream completion, divided by that total time. It excludes initial token wait, reasoning that returns no text, and tool execution.
 
 ## Custom prices
 
