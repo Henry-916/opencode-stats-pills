@@ -42,6 +42,7 @@ Speed therefore counts only output whose generation can be observed. Each step's
 - The reading reflects the rate of visible output, not the precise internal generation time of every token. Counting reasoning by time share treats the initial token wait as thinking time, so that part reads slightly low.
 - For TTFT, first output uses nonempty text, reasoning, tool-name or tool-argument timestamps; empty block starts do not count. Observed times are persisted, with historical timestamps as a supplementary source. When reasoning is invisible, TTFT includes the reasoning time.
 - Tokens and cost use paginated request history, deduplicated by message ID, excluding title generation. Compaction requests with usage records remain included. Tokens and cost show `—` until the full history is loaded.
+- A failed or interrupted step whose provider returned no usage (both `tokens` and `cost` missing) is left out of tokens and cost. Its usage is unknown, so it is neither estimated nor allowed to turn the whole session into `—`.
 - External subagents that do not report usage to OpenCode cannot provide accurate token statistics through this plugin.
 - Cache values normalized to zero by the host cannot distinguish missing upstream reporting from actual cache misses.
 - Context is the latest request’s prompt-side input paired with its own model capacity; missing readings show `—`, not `0%`. DSH additionally projects subsequent surface changes. This plugin does not reproduce that projection or the system/tools/messages breakdown.

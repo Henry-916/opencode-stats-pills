@@ -384,10 +384,11 @@ var tui_default = Plugin.define({
       if (finite(message.time.completed)) {
         if (!charges.has(id)) charges.set(id, /* @__PURE__ */ new Map());
         const old2 = charges.get(id).get(message.id);
-        charges.get(id).set(message.id, {
+        const tokens = message.tokens ?? old2?.tokens, cost = message.cost ?? old2?.cost;
+        if (tokens || cost !== void 0) charges.get(id).set(message.id, {
           model: message.model,
-          tokens: message.tokens ?? old2?.tokens,
-          cost: message.cost ?? old2?.cost
+          tokens,
+          cost
         });
       }
       const r = reading(message);
@@ -476,7 +477,8 @@ var tui_default = Plugin.define({
           if (r) r.streamEnd = event.created;
           break;
         }
-        case "session.step.ended": {
+        case "session.step.ended":
+        case "session.step.failed": {
           const r = history(id).get(event.data.assistantMessageID);
           if (r) {
             r.end = event.created;
@@ -550,7 +552,7 @@ var tui_default = Plugin.define({
       const messages = ctx.data.session.message.list(id);
       for (const m of messages) ingest(id, m);
       const entries = [...charges.get(id)?.values() ?? []];
-      const t = usageHydrated.has(id) ? sumUsage(entries.map((c) => c.tokens)) : void 0;
+      const t = usageHydrated.has(id) ? sumUsage(entries.flatMap((c) => c.tokens ? [c.tokens] : [])) : void 0;
       const last = latest.get(id);
       const selected = last?.model ?? session?.model;
       const selectedID = selected && ("modelID" in selected ? selected.modelID : selected.id);

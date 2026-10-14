@@ -56,7 +56,10 @@ export default Plugin.define({
       if (finite(message.time.completed)) {
         if (!charges.has(id)) charges.set(id, new Map());
         const old = charges.get(id)!.get(message.id);
-        charges.get(id)!.set(message.id, {model:message.model, tokens:message.tokens ?? old?.tokens, cost:message.cost ?? old?.cost});
+        const tokens = message.tokens ?? old?.tokens, cost = message.cost ?? old?.cost;
+        // A failed or interrupted step can complete before the provider reports
+        // usage. Its usage is unknown, not the session's, so it is left out.
+        if (tokens || cost !== undefined) charges.get(id)!.set(message.id, {model:message.model, tokens, cost});
       }
       const r = reading(message)!;
       const old = history(id).get(message.id);
@@ -120,7 +123,7 @@ export default Plugin.define({
           const r=history(id).get(event.data.assistantMessageID);
           if(r)r.streamEnd=event.created;break;
         }
-        case 'session.step.ended': {
+        case 'session.step.ended': case 'session.step.failed': {
           const r = history(id).get(event.data.assistantMessageID);
           if (r) { r.end = event.created; r.tokens = event.data.tokens; }
           // The cache projection may publish after this event. Keep a content-free
@@ -148,7 +151,8 @@ export default Plugin.define({
       const messages = ctx.data.session.message.list(id);
       for (const m of messages) ingest(id,m);
       const entries = [...charges.get(id)?.values() ?? []];
-      const t = usageHydrated.has(id) ? sumUsage(entries.map(c=>c.tokens)) : undefined;
+      // A request may report a host charge without token counts; it still costs.
+      const t = usageHydrated.has(id) ? sumUsage(entries.flatMap(c=>c.tokens?[c.tokens]:[])) : undefined;
       const last = latest.get(id);
       // Keep the measured input and its request model together after model switches.
       const selected = last?.model ?? session?.model;
