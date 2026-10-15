@@ -16,7 +16,7 @@ The UI is currently in Chinese. Icons automatically fall back to ordinary symbol
 
 ## Quick start
 
-Tested on **OpenCode 2.0.26**. You need OpenCode V2, Node.js/npm, and a terminal with mouse support. See the [installation guide](docs/installation.md) for dependency requirements.
+Tested on **OpenCode 2.0.29**. You need OpenCode V2, Node.js/npm, and a terminal with mouse support. See the [installation guide](docs/installation.md) for dependency requirements.
 
 ### Let OpenCode install it
 

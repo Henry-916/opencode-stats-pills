@@ -14,7 +14,7 @@
 
 ## 快速开始
 
-已在 **OpenCode 2.0.26** 验证。需要 OpenCode V2、Node.js/npm 和支持鼠标的终端。详细的依赖要求见[安装指南](docs/installation-zh.md)。
+已在 **OpenCode 2.0.29** 验证。需要 OpenCode V2、Node.js/npm 和支持鼠标的终端。详细的依赖要求见[安装指南](docs/installation-zh.md)。
 
 ### 让 OpenCode 帮你安装
 
