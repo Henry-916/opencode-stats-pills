@@ -1,4 +1,4 @@
-import type { SessionMessageInfo, TokenUsageInfo } from '@opencode/client';
+import type { SessionMessageAssistant, SessionMessageInfo, TokenUsageInfo } from '@opencode/client';
 
 // first: earliest output of any kind (TTFT). textFirst/textLead: time and size
 // of the first text batch. chars/toolFirst: the visible output behind
@@ -182,9 +182,26 @@ export function sumUsage(usages: Iterable<TokenUsageInfo | undefined>): TokenUsa
   return sum;
 }
 
-/** DSH pressure fallback: request input and the capacity of that request's model. */
+/**
+ * The step whose tokens fill the context window now: the latest assistant step with usage after the
+ * last completed compaction and before the revert boundary. Copied from `lastAssistantWithUsage` in
+ * `@opencode/client/solid`, which the host does not load for plugins; a test checks they agree.
+ */
+export function contextStep(messages: readonly SessionMessageInfo[], boundary?: string) {
+  const boundaryIndex = boundary ? messages.findIndex(m => m.id === boundary) : -1;
+  if (boundary && boundaryIndex === -1) return undefined;
+  const end = boundaryIndex === -1 ? messages.length : boundaryIndex;
+  for (let i = end - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.type === 'compaction' && m.status === 'completed') return undefined;
+    if (m.type === 'assistant' && m.tokens !== undefined) return m as SessionMessageAssistant & {tokens: TokenUsageInfo};
+  }
+  return undefined;
+}
+
+/** Like OpenCode's own context usage: every bucket of that step, output and thinking included. */
 export function contextReading(tokens?: TokenUsageInfo, limit?: number) {
-  const used = tokens && [tokens.input, tokens.cache?.read, tokens.cache?.write].every(finite) ? input(tokens) : undefined;
+  const used = tokens && [tokens.input, tokens.output, tokens.reasoning, tokens.cache?.read, tokens.cache?.write].every(finite) && total(tokens) > 0 ? total(tokens) : undefined;
   const capacity = finite(limit) && limit > 0 ? limit : undefined;
   const percent = finite(used) && capacity ? Math.min(100, Math.round(used / capacity * 100)) : undefined;
   return {used, limit:capacity, percent};

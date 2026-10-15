@@ -1,8 +1,8 @@
 import { Plugin } from '@opencode/plugin/tui';
-import type { SessionMessageAssistant, SessionMessageInfo } from '@opencode/client';
+import type { SessionMessageInfo } from '@opencode/client';
 import type { BoxRenderable, Renderable } from '@opentui/core';
 import { createEffect, createMemo, createSignal, For, Show, onCleanup, onMount } from 'solid-js';
-import { cachePercent, contextReading, compact, duration, finite, fold, mergeReading, reading, speed, total, sumUsage, observeOutput, restoreTiming, timingSample, type TimingSample, type Reading } from './metrics.js';
+import { cachePercent, contextReading, contextStep, compact, duration, finite, fold, mergeReading, reading, speed, total, sumUsage, observeOutput, restoreTiming, timingSample, type TimingSample, type Reading } from './metrics.js';
 
 import { latestTurnCost, money, parsePrices, sessionCost, type Charge } from './cost.js';
 
@@ -24,7 +24,6 @@ export default Plugin.define({
     const charges = new Map<string, Map<string, Charge>>();
     const timelines = new Map<string, Map<string, {id:string;type:string;time:{created:number}}>>();
     const [timingCache, writeTimingCache] = ctx.storage.store<{sessions:Record<string,Record<string,TimingSample>>}>('timing-v1',{initial:{sessions:{}}});    const histories = new Map<string, Map<string, Reading>>();
-    const latest = new Map<string, SessionMessageAssistant>();
     const loading = new Set<string>();
     const completedHydration = new Set<string>();
     const errors = new Set<string>();
@@ -64,7 +63,6 @@ export default Plugin.define({
       const r = reading(message)!;
       const old = history(id).get(message.id);
       history(id).set(message.id, restoreTiming(mergeReading(old,r),timingCache.sessions[id]?.[message.id]));
-      if (finite(message.time.completed) && message.tokens && message.time.created >= (latest.get(id)?.time.created ?? -1)) latest.set(id, message);
     }
     async function hydrate(id: string) {
       if (loading.has(id) || completedHydration.has(id)) return;
@@ -127,7 +125,7 @@ export default Plugin.define({
           const r = history(id).get(event.data.assistantMessageID);
           if (r) { r.end = event.created; r.tokens = event.data.tokens; }
           // The cache projection may publish after this event. Keep a content-free
-          // completed message for context readings until the next cache update.
+          // completed message for usage and cost until the next cache update.
           const m = ctx.data.session.message.get(id,event.data.assistantMessageID);
           if (m?.type === 'assistant') ingest(id,{...m,time:{...m.time,completed:event.created},tokens:event.data.tokens,cost:event.data.cost});
           else if (r) ingest(id,{id:r.id,type:'assistant',time:{created:r.start,streamed:r.streamEnd,completed:r.end},tokens:r.tokens,model:ctx.data.session.get(id)?.model ?? {providerID:'',id:''},agent:'',content:[],cost:event.data.cost});
@@ -138,9 +136,9 @@ export default Plugin.define({
           break;
         }
         case 'session.revert.committed': case 'session.compaction.ended': {
-          completedHydration.delete(id); history(id).clear(); charges.delete(id); timelines.delete(id); latest.delete(id); usageHydrated.delete(id); void hydrate(id); break;
+          completedHydration.delete(id); history(id).clear(); charges.delete(id); timelines.delete(id); usageHydrated.delete(id); void hydrate(id); break;
         }
-        case 'session.deleted': void writeTimingCache(draft=>{delete draft.sessions[id];}).catch(()=>{}); histories.delete(id); charges.delete(id); timelines.delete(id); latest.delete(id); usageHydrated.delete(id); completedHydration.delete(id); if(popup()?.sessionID===id) close(); break;
+        case 'session.deleted': void writeTimingCache(draft=>{delete draft.sessions[id];}).catch(()=>{}); histories.delete(id); charges.delete(id); timelines.delete(id); usageHydrated.delete(id); completedHydration.delete(id); if(popup()?.sessionID===id) close(); break;
         default: return;
       }
       changed();
@@ -153,12 +151,12 @@ export default Plugin.define({
       const entries = [...charges.get(id)?.values() ?? []];
       // A request may report a host charge without token counts; it still costs.
       const t = usageHydrated.has(id) ? sumUsage(entries.flatMap(c=>c.tokens?[c.tokens]:[])) : undefined;
-      const last = latest.get(id);
-      // Keep the measured input and its request model together after model switches.
+      // The same step and revert boundary OpenCode uses for its own context usage.
+      const last = contextStep(messages, session?.revert?.messageID);
+      // Keep the measured usage and its request model together after model switches.
       const selected = last?.model ?? session?.model;
-      const selectedID=selected && ('modelID' in selected ? selected.modelID : selected.id);
       const models = ctx.data.location.model.list(session?.location ?? ctx.location) ?? [];
-      const model = models.find(m=>m.providerID===selected?.providerID && m.modelID===selectedID);
+      const model = models.find(m=>m.providerID===selected?.providerID && m.id===selected.id);
       const {used,limit,percent} = contextReading(last?.tokens,model?.limit.context);
       const cost = usageHydrated.has(id) ? sessionCost(entries, prices, models) : undefined;
       const lastCost = usageHydrated.has(id) ? latestTurnCost([...timelines.get(id)?.values() ?? []],charges.get(id) ?? new Map(),prices,models) : undefined;

@@ -38,7 +38,7 @@ export function chargeCost(c: Charge, prices: Prices, models: readonly ModelInfo
   if (custom) return tokenCost(c.tokens, custom);
   // A positive host charge is usable; zero alone cannot prove a model is free.
   if (finite(c.cost) && c.cost > 0) return c.cost;
-  const model = models.find(m => m.providerID === c.model.providerID && m.modelID === c.model.id);
+  const model = models.find(m => m.providerID === c.model.providerID && m.id === c.model.id);
   const knownFree = model?.cost.length && model.cost.every(p => p.input === 0 && p.output === 0 && p.cache.read === 0 && p.cache.write === 0);
   return knownFree && c.cost === 0 ? 0 : undefined;
 }

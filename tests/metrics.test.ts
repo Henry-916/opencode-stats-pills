@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cachePercent, contextReading, duration, total, fold, speed, compact, reading, mergeReading, sumUsage, observeOutput, timingSample, restoreTiming } from '../src/metrics.js';
+import { lastAssistantWithUsage } from '@opencode/client/solid';
+import { cachePercent, contextReading, contextStep, duration, total, fold, speed, compact, reading, mergeReading, sumUsage, observeOutput, timingSample, restoreTiming } from '../src/metrics.js';
 const tokens = {input:100,output:60,reasoning:40,cache:{read:300,write:100}};
 test('disjoint input buckets and reasoning are counted once',()=>{assert.equal(total(tokens),600);assert.equal(cachePercent(tokens),'60%');});
 test('missing usage is distinct from a reported cache miss',()=>{assert.equal(cachePercent(),'—');assert.equal(cachePercent({...tokens,cache:{read:0,write:0}}),'0%');});
@@ -115,11 +116,30 @@ test('legacy first-token samples restore TTFT but not speed',()=>{
 
 test('zero-length text windows remain unavailable',()=>{assert.equal(speed(fold([{id:'zero',start:0,first:1000,textFirst:1000,chars:100,streamEnd:1000,end:1100,tokens,toolMs:0}])),'— tok/s');});
 
-test('DSH context pressure uses prompt buckets, excludes output and thinking',()=>{
-  assert.deepEqual(contextReading(tokens,10000),{used:500,limit:10000,percent:5});
+test('context usage counts every bucket of the step, like OpenCode',()=>{
+  assert.deepEqual(contextReading(tokens,10000),{used:600,limit:10000,percent:6});
+  assert.equal(contextReading({input:0,output:0,reasoning:0,cache:{read:0,write:0}},10000).used,undefined);
   assert.deepEqual(contextReading(undefined,10000),{used:undefined,limit:10000,percent:undefined});
   assert.equal(contextReading(tokens,0).percent,undefined);
   assert.equal(contextReading({...tokens,input:NaN},10000).percent,undefined);
+});
+
+test('context step matches OpenCode across compactions and revert boundaries',()=>{
+  const assistant=(id:string,usage?:object)=>({id,type:'assistant',time:{created:0},...(usage?{tokens:usage}:{})});
+  const compaction=(id:string,status:string)=>({id,type:'compaction',status,time:{created:0}});
+  const user=(id:string)=>({id,type:'user',time:{created:0}});
+  const cases:[any[],string?][]=[
+    [[]],
+    [[user('u1'),assistant('a1',tokens),assistant('a2')]],
+    [[user('u1'),assistant('a1',tokens),compaction('c1','completed')]],
+    [[user('u1'),assistant('a1',tokens),compaction('c1','running')]],
+    [[assistant('a1',tokens),compaction('c1','completed'),user('u2'),assistant('a2',tokens)]],
+    [[assistant('a1',tokens),user('u2'),assistant('a2',tokens)],'u2'],
+    [[assistant('a1',tokens),compaction('c1','completed'),user('u2'),assistant('a2',tokens)],'u2'],
+    [[assistant('a1',tokens)],'missing'],
+  ];
+  for(const [messages,boundary] of cases) assert.equal(contextStep(messages,boundary),lastAssistantWithUsage(messages,boundary));
+  assert.equal(contextStep([assistant('a1',tokens),user('u2'),assistant('a2',tokens)] as any,'u2')?.id,'a1');
 });
 
 test('a zero-length text window adds no tokens to a mixed aggregate',()=>{

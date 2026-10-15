@@ -25,9 +25,11 @@ test('validate config and preserve explicit zero',()=>{
 test('host zero requires known free model; positive reported cost is retained',()=>{
   assert.equal(chargeCost({model,cost:0},{},[]),undefined);
   assert.equal(chargeCost({model,cost:0.3},{},[]),0.3);
-  const free = {providerID:'relay',modelID:'test',cost:[{input:0,output:0,cache:{read:0,write:0}}]} as any;
+  // Requests name the catalog id, which can differ from the id sent to the provider.
+  const free = {providerID:'relay',id:'test',modelID:'test-upstream',cost:[{input:0,output:0,cache:{read:0,write:0}}]} as any;
   assert.equal(chargeCost({model,cost:0},{},[free]),0);
   assert.equal(chargeCost({model,cost:0},{},[{...free,cost:[]}]),undefined);
+  assert.equal(chargeCost({model,cost:0},{},[{...free,id:'test-upstream',modelID:'test'}]),undefined);
 });
 test('model switches use request prices; session totals exclude host title charges',()=>{
   const other={providerID:'other',id:'test'};

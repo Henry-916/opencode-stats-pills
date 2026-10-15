@@ -11,7 +11,7 @@
 | Average TTFT | Average step start → first output duration across eligible samples |
 | Total tokens | Sum of completed model and compaction request `input + cache.read + cache.write + output + reasoning`, excluding title requests |
 | Cache hit rate | `cache.read / (input + cache.read + cache.write)` |
-| Context usage | Latest completed request input, including cache reads/writes, divided by that request model's context window; excludes output and reasoning |
+| Context usage | Same as OpenCode's own reading: every token bucket (input, cache reads/writes, output, reasoning) of the latest request with usage after the last completed compaction and before the revert boundary, divided by that request model's context window |
 
 For TTFT, the first output can be text, reasoning, a tool name, or tool arguments. In OpenCode V2, `time.streamed` marks **stream completion**, while `time.completed` may also include tool execution.
 
@@ -45,7 +45,7 @@ Speed therefore counts only output whose generation can be observed. Each step's
 - A failed or interrupted step whose provider returned no usage (both `tokens` and `cost` missing) is left out of tokens and cost. Its usage is unknown, so it is neither estimated nor allowed to turn the whole session into `—`.
 - External subagents that do not report usage to OpenCode cannot provide accurate token statistics through this plugin.
 - Cache values normalized to zero by the host cannot distinguish missing upstream reporting from actual cache misses.
-- Context is the latest request’s prompt-side input paired with its own model capacity; missing readings show `—`, not `0%`. DSH additionally projects subsequent surface changes. This plugin does not reproduce that projection or the system/tools/messages breakdown.
+- Context follows OpenCode's `lastAssistantWithUsage` (`@opencode/client/solid`) to pick the request and counts its output and reasoning, which the next request carries; it uses that request model's capacity, and missing readings show `—`, not `0%`. DSH counts only request input and additionally projects subsequent surface changes. This plugin does not reproduce that projection or the system/tools/messages breakdown.
 
 ## Cost
 

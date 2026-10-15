@@ -161,8 +161,19 @@ function sumUsage(usages) {
   }
   return sum;
 }
+function contextStep(messages, boundary) {
+  const boundaryIndex = boundary ? messages.findIndex((m) => m.id === boundary) : -1;
+  if (boundary && boundaryIndex === -1) return void 0;
+  const end = boundaryIndex === -1 ? messages.length : boundaryIndex;
+  for (let i = end - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.type === "compaction" && m.status === "completed") return void 0;
+    if (m.type === "assistant" && m.tokens !== void 0) return m;
+  }
+  return void 0;
+}
 function contextReading(tokens, limit) {
-  const used = tokens && [tokens.input, tokens.cache?.read, tokens.cache?.write].every(finite) ? input(tokens) : void 0;
+  const used = tokens && [tokens.input, tokens.output, tokens.reasoning, tokens.cache?.read, tokens.cache?.write].every(finite) && total(tokens) > 0 ? total(tokens) : void 0;
   const capacity = finite(limit) && limit > 0 ? limit : void 0;
   const percent = finite(used) && capacity ? Math.min(100, Math.round(used / capacity * 100)) : void 0;
   return { used, limit: capacity, percent };
@@ -198,7 +209,7 @@ function chargeCost(c, prices, models) {
   const custom = prices[c.model.providerID]?.[c.model.id];
   if (custom) return tokenCost(c.tokens, custom);
   if (finite(c.cost) && c.cost > 0) return c.cost;
-  const model = models.find((m) => m.providerID === c.model.providerID && m.modelID === c.model.id);
+  const model = models.find((m) => m.providerID === c.model.providerID && m.id === c.model.id);
   const knownFree = model?.cost.length && model.cost.every((p) => p.input === 0 && p.output === 0 && p.cache.read === 0 && p.cache.write === 0);
   return knownFree && c.cost === 0 ? 0 : void 0;
 }
@@ -336,7 +347,6 @@ var tui_default = Plugin.define({
       }
     });
     const histories = /* @__PURE__ */ new Map();
-    const latest = /* @__PURE__ */ new Map();
     const loading = /* @__PURE__ */ new Set();
     const completedHydration = /* @__PURE__ */ new Set();
     const errors = /* @__PURE__ */ new Set();
@@ -394,7 +404,6 @@ var tui_default = Plugin.define({
       const r = reading(message);
       const old = history(id).get(message.id);
       history(id).set(message.id, restoreTiming(mergeReading(old, r), timingCache.sessions[id]?.[message.id]));
-      if (finite(message.time.completed) && message.tokens && message.time.created >= (latest.get(id)?.time.created ?? -1)) latest.set(id, message);
     }
     async function hydrate(id) {
       if (loading.has(id) || completedHydration.has(id)) return;
@@ -523,7 +532,6 @@ var tui_default = Plugin.define({
           history(id).clear();
           charges.delete(id);
           timelines.delete(id);
-          latest.delete(id);
           usageHydrated.delete(id);
           void hydrate(id);
           break;
@@ -536,7 +544,6 @@ var tui_default = Plugin.define({
           histories.delete(id);
           charges.delete(id);
           timelines.delete(id);
-          latest.delete(id);
           usageHydrated.delete(id);
           completedHydration.delete(id);
           if (popup()?.sessionID === id) close();
@@ -553,11 +560,10 @@ var tui_default = Plugin.define({
       for (const m of messages) ingest(id, m);
       const entries = [...charges.get(id)?.values() ?? []];
       const t = usageHydrated.has(id) ? sumUsage(entries.flatMap((c) => c.tokens ? [c.tokens] : [])) : void 0;
-      const last = latest.get(id);
+      const last = contextStep(messages, session?.revert?.messageID);
       const selected = last?.model ?? session?.model;
-      const selectedID = selected && ("modelID" in selected ? selected.modelID : selected.id);
       const models = ctx.data.location.model.list(session?.location ?? ctx.location) ?? [];
-      const model = models.find((m) => m.providerID === selected?.providerID && m.modelID === selectedID);
+      const model = models.find((m) => m.providerID === selected?.providerID && m.id === selected.id);
       const {
         used,
         limit,
