@@ -2,19 +2,34 @@
 
 给 OpenCode V2 加一条轻量统计栏。不用展开侧栏，就能看到生成速度、Token 用量、缓存命中、费用和上下文占用。
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![OpenCode](https://img.shields.io/badge/OpenCode-V2%20·%20tested%202.0.29-black.svg)](https://opencode.ai)
+
 [English](README.md) · **简体中文**
+
+![输入框下方的 StatsPills 统计栏](assets/screenshots/hero.png)
+
+## 功能
 
 ![统计栏](assets/screenshots/stats-bar.png)
 
-![会话统计](assets/screenshots/session-stats.png)
+- **速度**：流式输出速度（tok/s）、模型用时、平均首 Token 延迟
+- **Token**：总用量和缓存命中率，以及输入、缓存读取、输出、思考的明细
+- **费用**：当前会话和最近一轮对话，可按模型自定义价格
+- **上下文**：模型上下文窗口的占用，算法与 OpenCode 官方一致
+- 点击任意指标查看详情；主会话和子代理会话分别统计
+- 不装额外字体也能用；自定义图标为可选项
 
-![Token 用量](assets/screenshots/token-usage.png)
+> [!NOTE]
+> 界面文字目前为中文，欢迎贡献翻译。
 
-![上下文占用](assets/screenshots/context-usage.png)
+## 环境要求
 
-## 快速开始
+- **OpenCode V2**（已在 **2.0.29** 验证，不支持 V1）
+- Node.js 和 npm，用于从源码构建
+- 支持鼠标的终端
 
-已在 **OpenCode 2.0.29** 验证。需要 OpenCode V2、Node.js/npm 和支持鼠标的终端。详细的依赖要求见[安装指南](docs/installation-zh.md)。
+## 安装
 
 ### 让 OpenCode 帮你安装
 
@@ -35,28 +50,40 @@
 
 ### 手动安装
 
-见[安装指南](docs/installation-zh.md)。
+构建插件，创建指向构建产物的本地 TUI 入口，再在 `cli.json` 中启用。详细步骤和可选的自定义图标见[安装指南](docs/installation-zh.md)。
 
-## 怎么用
+## 使用
 
-悬浮在指标上会高亮，点击打开详情。按 **Esc** 或点击外部关闭。
+主会话里，统计栏在输入框下方；子代理会话里，统计栏在 **Subagents / Shell** 面板上方。
 
-| 指标 | 详情 |
-| --- | --- |
-| 速度 | 模型用时、平均首 Token 延迟、生成速度 |
-| Token | 缓存命中、输入、缓存读取、输出、思考 |
-| 费用 | 当前会话、最近一轮对话 |
-| 上下文 | 最近请求用量、模型窗口、进度条 |
+鼠标悬浮在指标上会高亮，点击打开详情。按 **Esc** 或点击外部关闭。
 
-主会话显示在输入框下方，子会话显示在 **Subagents / Shell** 面板上方。每个会话单独统计，不会把子会话用量加到主会话上。
+<table>
+  <tr>
+    <td width="50%"><b>速度</b>：模型用时、平均首 Token 延迟、生成速度<br><img src="assets/screenshots/session-stats.png" alt="速度详情"></td>
+    <td width="50%"><b>Token</b>：缓存命中、未缓存输入、缓存读取、输出、思考<br><img src="assets/screenshots/token-usage.png" alt="Token 详情"></td>
+  </tr>
+  <tr>
+    <td width="50%"><b>费用</b>：当前会话、最近一轮对话<br><img src="assets/screenshots/cost.png" alt="费用详情"></td>
+    <td width="50%"><b>上下文</b>：最近请求用量、模型窗口、进度条<br><img src="assets/screenshots/context-usage.png" alt="上下文详情"></td>
+  </tr>
+</table>
 
-`—` 表示还没有可测的流式输出，例如只有工具调用和短思考，或回复只有一批增量。计算方式和数据限制见[统计口径](docs/metrics-zh.md)。
+每个会话单独统计，子代理会话的用量不会加到主会话上。
 
-输出速度只统计能观察到生成过程的部分：从流式思考或首批正文开始，到模型流结束之间生成的 Token ÷ 这段累计时长，不包含首 Token 等待、没有返回文本的思考和工具执行时间。
+### 统计口径
 
-## 自定义价格
+- **速度**只统计能观察到生成过程的输出：从流式思考或首批正文开始，到模型流结束之间生成的 Token ÷ 这段时长。不包含首 Token 等待、没有返回文本的思考和工具执行时间。
+- **Token 和费用**汇总会话中的模型请求和压缩请求，不包含自动生成标题的用量。
+- **`—`** 表示暂时没有可靠的数据可显示，例如只有工具调用和短思考的步骤、只有一批增量的回复、历史记录不完整或请求缺少价格。插件不会估算缺失的值。
 
-在 `cli.json` 的 `plugins` 数组中，将 `"opencode-stats-pills"` 替换为下面的对象，其他配置保持原样：
+每项指标的计算方式和数据限制见[统计口径](docs/metrics-zh.md)。
+
+## 配置
+
+### 自定义价格
+
+默认使用 OpenCode 自己计算的费用。如果想用自己的价格，在 `cli.json` 的 `plugins` 数组中，将 `"opencode-stats-pills"` 替换为下面的对象，其他配置保持原样：
 
 ```json
 {
@@ -75,23 +102,18 @@
 }
 ```
 
-`package` 填安装时创建的本地插件目录的绝对路径（目录内有 `tui.ts`），例如 Windows 的 `C:/Users/你的用户名/.config/opencode/plugins/stats-pills`。不要填插件 ID `opencode-stats-pills`：OpenCode 2.0.26 按 ID 启用已发现的插件时不会传递 options。
+- `package` 填本地插件目录的绝对路径（目录内有 `tui.ts`），例如 Windows 的 `C:/Users/你的用户名/.config/opencode/plugins/stats-pills`。不要填插件 ID `opencode-stats-pills`：OpenCode 2.0.26 按 ID 启用已发现的插件时不会传递 options。
+- 价格单位为 **美元 / 百万 Token**。示例价格仅用于说明格式，请填写自己的供应商 ID、模型 ID 和价格，然后重启 OpenCode。
+- `input` 和 `output` 必填；思考按输出价格计算，缓存写入按输入价格计算。
+- 没有缓存读取用量时可以省略 `cacheRead`；有用量却未配置价格时，费用显示 `—`。免费项目填 `0`。
 
-价格单位为 **美元 / 百万 Token**。示例价格仅用于说明格式，请填写自己的供应商 ID、模型 ID 和价格，然后重启 OpenCode。
-
-`input` 和 `output` 必填；思考按输出价格计算，缓存写入按输入价格计算。`cacheRead` 对应缓存读取；没有缓存读取用量时可以省略，有用量却未配置价格时费用显示 `—`。免费项目填 `0`。
-
-自定义价格优先于 OpenCode 的费用，未配置的模型使用宿主费用。费用 pill 位于 Token 和上下文之间，点击查看当前会话与最近一轮对话的费用。修改价格会重新计算已有请求，金额是估算值，不是账单。
-
-Token 用量和会话费用汇总会话中的模型与压缩请求，不包含自动生成标题的用量。历史记录不完整或请求缺少价格时显示 `—`。主会话和子会话分别计算。
+自定义价格优先于 OpenCode 的费用，未配置的模型继续使用宿主费用。修改价格会重新计算已有请求。金额是估算值，不是账单。
 
 ## 参与贡献
 
 **欢迎提 PR**：修复 bug、适配终端、翻译和补充文档。小改动可以直接提交；较大的改动请先开 issue 讨论。
 
-开发步骤和提交要求见 [CONTRIBUTING.md](CONTRIBUTING.md#简体中文)。
-
-反馈 bug 请附 OpenCode 版本、操作系统、终端和复现步骤。
+开发步骤和提交要求见 [CONTRIBUTING.md](CONTRIBUTING.md#简体中文)。反馈 bug 请附 OpenCode 版本、操作系统、终端和复现步骤。
 
 ## 致谢
 
@@ -99,4 +121,4 @@ Token 用量和会话费用汇总会话中的模型与压缩请求，不包含�
 
 ## 许可证
 
-[MIT](LICENSE)。
+[MIT](LICENSE)

@@ -1,22 +1,35 @@
 # OpenCode StatsPills
 
-A small stats bar for OpenCode V2. See generation speed, token usage, cache hits, cost, and context usage without opening the sidebar.
+A compact stats bar for OpenCode V2: generation speed, token usage, cache hits, cost, and context usage at a glance, without opening the sidebar.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![OpenCode](https://img.shields.io/badge/OpenCode-V2%20·%20tested%202.0.29-black.svg)](https://opencode.ai)
 
 **English** · [简体中文](README-zh.md)
 
+![StatsPills below the OpenCode input box](assets/screenshots/hero.png)
+
+## Features
+
 ![Stats bar](assets/screenshots/stats-bar.png)
 
-![Session statistics](assets/screenshots/session-stats.png)
+- **Speed**: streamed output speed (tok/s), model time, and average time to first token
+- **Tokens**: total usage with cache hit rate, plus input, cached reads, output, and reasoning
+- **Cost**: current session and most recent turn, with optional custom per-model prices
+- **Context**: usage of the model's context window, calculated the same way as OpenCode itself
+- Click any pill for details; main and subagent sessions are tracked separately
+- Works without extra fonts; optional custom icons
 
-![Token usage](assets/screenshots/token-usage.png)
+> [!NOTE]
+> The UI text is currently in Chinese. Translations are welcome.
 
-![Context usage](assets/screenshots/context-usage.png)
+## Requirements
 
-The UI is currently in Chinese. Icons automatically fall back to ordinary symbols when the existing custom font is not detected.
+- **OpenCode V2** (tested on **2.0.29**; V1 is not supported)
+- Node.js and npm, to build from source
+- A terminal with mouse support
 
-## Quick start
-
-Tested on **OpenCode 2.0.29**. You need OpenCode V2, Node.js/npm, and a terminal with mouse support. See the [installation guide](docs/installation.md) for dependency requirements.
+## Installation
 
 ### Let OpenCode install it
 
@@ -37,28 +50,40 @@ Check the build output, entry path, and enabled configuration. Report the instal
 
 ### Install manually
 
-See the [installation guide](docs/installation.md).
+Build the plugin, point a local TUI entry at the build output, and enable it in `cli.json`. Step-by-step instructions and the optional custom icons are in the [installation guide](docs/installation.md).
 
-## Using it
+## Usage
 
-Hover over a group to highlight it, then click to open its details. Press **Esc** or click outside to close.
+In a main session, the bar sits below the input box. In a subagent session, it sits above the **Subagents / Shell** panel.
 
-| Group | Details |
-| --- | --- |
-| Speed | Model time, average TTFT, generation speed |
-| Tokens | Cache hits, input, cached reads, output, reasoning |
-| Cost | Current session, most recent conversation turn |
-| Context | Recent request usage, context window, progress bar |
+Hover over a pill to highlight it, then click to open its details. Press **Esc** or click outside to close.
 
-In a main session, the bar sits below the input box. In a child session, it sits above the **Subagents / Shell** panel. Each session has its own totals; child usage is not added to its parent.
+<table>
+  <tr>
+    <td width="50%"><b>Speed</b>: model time, average TTFT, generation speed<br><img src="assets/screenshots/session-stats.png" alt="Speed details"></td>
+    <td width="50%"><b>Tokens</b>: cache hits, uncached input, cached reads, output, reasoning<br><img src="assets/screenshots/token-usage.png" alt="Token details"></td>
+  </tr>
+  <tr>
+    <td width="50%"><b>Cost</b>: current session, most recent conversation turn<br><img src="assets/screenshots/cost.png" alt="Cost details"></td>
+    <td width="50%"><b>Context</b>: latest request usage, context window, progress bar<br><img src="assets/screenshots/context-usage.png" alt="Context details"></td>
+  </tr>
+</table>
 
-`—` means no streamed output has been measured yet, such as steps with only tool calls and brief reasoning, or a reply delivered in a single batch. The [statistics reference](docs/metrics.md) explains the calculations and data limitations.
+Each session has its own totals; subagent usage is not added to its parent.
 
-Output speed counts only output whose generation can be observed: tokens generated between the start of streamed reasoning or the first text batch and model stream completion, divided by that total time. It excludes initial token wait, reasoning that returns no text, and tool execution.
+### How the numbers are measured
 
-## Custom prices
+- **Speed** counts only output whose generation can be observed: tokens generated between the start of streamed reasoning or the first text batch and model stream completion, divided by that time. It excludes initial token wait, reasoning that returns no text, and tool execution.
+- **Tokens and cost** sum the model and compaction requests in the session, excluding automatic title generation.
+- **`—`** means there is nothing reliable to show yet, for example a step with only tool calls and brief reasoning, a reply delivered in a single batch, incomplete history, or an unpriced request. The plugin never estimates a missing value.
 
-In the `plugins` array of `cli.json`, replace `"opencode-stats-pills"` with this object. Keep your other settings:
+The [statistics reference](docs/metrics.md) explains every calculation and its limitations.
+
+## Configuration
+
+### Custom prices
+
+By default, cost comes from OpenCode's own charges. To use your own rates, replace `"opencode-stats-pills"` in the `plugins` array of `cli.json` with this object, keeping your other settings:
 
 ```json
 {
@@ -77,28 +102,23 @@ In the `plugins` array of `cli.json`, replace `"opencode-stats-pills"` with this
 }
 ```
 
-Set `package` to the absolute path of the local plugin directory containing `tui.ts`, for example `C:/Users/your-name/.config/opencode/plugins/stats-pills` on Windows. Do not use the plugin ID `opencode-stats-pills`: OpenCode 2.0.26 does not pass options when enabling an already discovered plugin by ID.
+- Set `package` to the absolute path of the local plugin directory containing `tui.ts`, for example `C:/Users/your-name/.config/opencode/plugins/stats-pills` on Windows. Do not use the plugin ID `opencode-stats-pills`: OpenCode 2.0.26 does not pass options when enabling an already discovered plugin by ID.
+- Rates are in **USD per million tokens**. The numbers above are examples; enter your provider ID, model ID, and actual rates, then restart OpenCode.
+- `input` and `output` are required. Reasoning uses the output rate; cache writes use the input rate.
+- `cacheRead` may be omitted when cached reads are unused; cached reads without a rate make the cost unavailable. Set an explicit `0` for free buckets.
 
-Rates are in **USD per million tokens**. These numbers are examples; enter your provider ID, model ID, and actual rates, then restart OpenCode.
-
-`input` and `output` are required. Reasoning uses the output rate; cache writes use the input rate. `cacheRead` may be omitted when cached reads are unused; cached reads without a rate make the cost unavailable. Set an explicit `0` for free buckets.
-
-Custom prices override OpenCode charges for matching models. Other models use host charges. The cost pill sits between tokens and context; click it for the session total and most recent conversation turn. Changing rates recalculates existing requests. Amounts are estimates, not invoices.
-
-Token usage and session cost sum model and compaction requests in the session timeline, excluding automatic title generation. Incomplete history or unpriced requests yield `—`. Parent and child sessions are calculated separately.
+Custom prices override OpenCode charges for matching models; other models keep using host charges. Changing rates recalculates existing requests. Amounts are estimates, not invoices.
 
 ## Contributing
 
-**PRs are welcome** — fixes, terminal support, translations, and documentation. Small changes can go straight to a PR; discuss larger changes in an issue first.
+**PRs are welcome**: fixes, terminal support, translations, and documentation. Small changes can go straight to a PR; for larger changes, please open an issue first.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup and PR requirements.
-
-For bug reports, include your OpenCode version, OS, terminal, and steps to reproduce.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup and PR requirements. Bug reports should include your OpenCode version, OS, terminal, and steps to reproduce.
 
 ## Credits
 
-The interface is inspired by DeepSeek Harness (DSH)'s StatsPills.
+The interface is inspired by the StatsPills in DeepSeek Harness (DSH).
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
