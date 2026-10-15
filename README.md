@@ -36,16 +36,16 @@ A compact stats bar for OpenCode V2: generation speed, token usage, cache hits, 
 Copy this prompt into OpenCode:
 
 ```text
-Install https://github.com/Henry-916/opencode-stats-pills for me.
+Install the OpenCode plugin https://github.com/Henry-916/opencode-stats-pills for me. The steps are in docs/installation.md in that repository; follow that guide.
 
-Read the repository's README and installation guide, then build and enable the plugin. During installation:
-- Check OpenCode V2 and the required dependencies. Explain what needs attention if tools are missing or versions are incompatible.
-- Keep the checkout in a permanent directory and create a local plugin entry using the build output's absolute path.
-- Merge existing configuration without overwriting other settings or adding duplicate entries. Preserve local changes and sessions.
-- If opencode-tps-meter is enabled, disable its TUI contribution to avoid duplicate statistics.
-- Preserve my terminal and font settings.
+Before changing anything, ask me whether I also want the optional custom icons. Tell me what they involve (installing a font and adding it to my terminal's font fallback) so I can decide.
 
-Check the build output, entry path, and enabled configuration. Report the installation location and which applications need restarting. Do not send a model request just to verify installation; clearly report any incomplete steps.
+While installing:
+- Put the repository somewhere permanent, not in a temporary folder or my current project. OpenCode loads the plugin from its build output, so the folder can't move later.
+- Add to my existing OpenCode config without removing or overwriting anything.
+- If a step fails or my setup doesn't match the guide, stop and tell me instead of working around it.
+
+When you're done, tell me where the repository is and which files you changed, and remind me to restart OpenCode.
 ```
 
 ### Install manually
