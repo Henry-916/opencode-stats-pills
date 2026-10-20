@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "type": "module",
   "description": "DSH-inspired performance and usage pills for OpenCode V2",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opentui",
+    "tui",
+    "token-usage",
+    "cost-tracking",
+    "statusbar"
+  ],
   "exports": {
     "./tui": "./dist/tui.mjs"
   },
