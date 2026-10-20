@@ -61,15 +61,35 @@ test('cleanup does not access a destroyed parent', () => {
   assert.equal(state.wrap, Wrap.Wrap);
 });
 
-test('use layout methods on the renderable when getLayoutNode is absent (OpenCode 2.1+)', () => {
-  const { parent: legacy, state } = fixture(Wrap.NoWrap, { unit: Unit.Point, value: 2 });
-  const { getLayoutNode, ...rest } = legacy;
-  const parent = { ...rest, ...getLayoutNode() };
-  const restore = wrapFooter(parent);
-  assert.equal(state.wrap, Wrap.Wrap);
-  assert.deepEqual(state.gap, { unit: Unit.Point, value: 0 });
-  restore();
-  assert.equal(state.wrap, Wrap.NoWrap);
-  assert.deepEqual(state.gap, { unit: Unit.Point, value: 2 });
-  assert.equal(state.renders, 2);
+function modernFixture(wrap: Wrap, gap: Value) {
+  const state = { wrap, gap, renders: 0 };
+  const wraps = { 'no-wrap': Wrap.NoWrap, wrap: Wrap.Wrap, 'wrap-reverse': Wrap.WrapReverse } as const;
+  const parent = {
+    isDestroyed: false,
+    requestRender: () => { state.renders++; },
+    getFlexWrap: () => state.wrap,
+    getGap: (gutter: Gutter) => { assert.equal(gutter, Gutter.Row); return state.gap; },
+    set flexWrap(value: keyof typeof wraps | null | undefined) { state.wrap = wraps[value ?? 'no-wrap']; },
+    set rowGap(value: number | `${number}%` | undefined | null) {
+      state.gap = value == null ? { unit: Unit.Undefined, value: NaN }
+        : typeof value === 'number' ? { unit: Unit.Point, value }
+        : { unit: Unit.Percent, value: Number.parseFloat(value) };
+    },
+  };
+  return { state, parent };
+}
+
+test('use public style setters when getLayoutNode is absent (OpenCode 2.1+)', () => {
+  for (const wrap of [Wrap.NoWrap, Wrap.Wrap, Wrap.WrapReverse]) {
+    for (const gap of [{ unit: Unit.Point, value: 3 }, { unit: Unit.Percent, value: 12 }, { unit: Unit.Undefined, value: NaN }]) {
+      const { state, parent } = modernFixture(wrap, gap);
+      const restore = wrapFooter(parent);
+      assert.equal(state.wrap, Wrap.Wrap);
+      assert.deepEqual(state.gap, { unit: Unit.Point, value: 0 });
+      restore();
+      assert.equal(state.wrap, wrap);
+      assert.deepEqual(state.gap, gap);
+      assert.equal(state.renders, 2);
+    }
+  }
 });

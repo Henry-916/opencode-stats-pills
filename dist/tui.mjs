@@ -311,20 +311,51 @@ function hasIconFont() {
 // src/layout.ts
 import { Yoga } from "@opentui/core";
 var { Gutter, Unit, Wrap } = Yoga;
+var wrapStyles = {
+  [Wrap.NoWrap]: "no-wrap",
+  [Wrap.Wrap]: "wrap",
+  [Wrap.WrapReverse]: "wrap-reverse"
+};
+function gapStyle(gap) {
+  if (gap.unit === Unit.Point) return gap.value;
+  if (gap.unit === Unit.Percent) return `${gap.value}%`;
+  return void 0;
+}
+function rowLayout(parent) {
+  if ("getLayoutNode" in parent) {
+    const node = parent.getLayoutNode();
+    return {
+      getWrap: () => node.getFlexWrap(),
+      setWrap: (wrap) => node.setFlexWrap(wrap),
+      getGap: () => node.getGap(Gutter.Row),
+      setGap: (gap) => node.setGap(Gutter.Row, gap)
+    };
+  }
+  return {
+    getWrap: () => parent.getFlexWrap(),
+    setWrap: (wrap) => {
+      parent.flexWrap = wrapStyles[wrap];
+    },
+    getGap: () => parent.getGap(Gutter.Row),
+    setGap: (gap) => {
+      parent.rowGap = gapStyle(gap);
+    }
+  };
+}
 function wrapFooter(parent) {
-  const node = typeof parent.getLayoutNode === "function" ? parent.getLayoutNode() : parent;
-  const previousWrap = node.getFlexWrap();
-  const previousGap = { ...node.getGap(Gutter.Row) };
-  node.setFlexWrap(Wrap.Wrap);
-  node.setGap(Gutter.Row, 0);
+  const layout = rowLayout(parent);
+  const previousWrap = layout.getWrap();
+  const previousGap = { ...layout.getGap() };
+  layout.setWrap(Wrap.Wrap);
+  layout.setGap({ unit: Unit.Point, value: 0 });
   parent.requestRender();
   let restored = false;
   return () => {
     if (restored || parent.isDestroyed) return;
     restored = true;
-    if (node.getFlexWrap() === Wrap.Wrap) node.setFlexWrap(previousWrap);
-    const gap = node.getGap(Gutter.Row);
-    if (gap.unit === Unit.Point && gap.value === 0) node.setGap(Gutter.Row, previousGap);
+    if (layout.getWrap() === Wrap.Wrap) layout.setWrap(previousWrap);
+    const gap = layout.getGap();
+    if (gap.unit === Unit.Point && gap.value === 0) layout.setGap(previousGap);
     parent.requestRender();
   };
 }
