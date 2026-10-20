@@ -3,7 +3,7 @@
 A compact stats bar for OpenCode V2: generation speed, token usage, cache hits, cost, and context usage at a glance, without opening the sidebar.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![OpenCode](https://img.shields.io/badge/OpenCode-V2%20·%20tested%202.0.29-black.svg)](https://opencode.ai)
+[![OpenCode](https://img.shields.io/badge/OpenCode-V2%20·%20tested%202.1.0-black.svg)](https://opencode.ai)
 
 **English** · [简体中文](README-zh.md)
 
@@ -25,7 +25,7 @@ A compact stats bar for OpenCode V2: generation speed, token usage, cache hits, 
 
 ## Requirements
 
-- **OpenCode V2** (tested on **2.0.29**; V1 is not supported)
+- **OpenCode V2** (tested on **2.1.0**; V1 is not supported)
 - Node.js and npm, to build from source
 - A terminal with mouse support
 

@@ -60,3 +60,16 @@ test('cleanup does not access a destroyed parent', () => {
   assert.equal(state.renders, 1);
   assert.equal(state.wrap, Wrap.Wrap);
 });
+
+test('use layout methods on the renderable when getLayoutNode is absent (OpenCode 2.1+)', () => {
+  const { parent: legacy, state } = fixture(Wrap.NoWrap, { unit: Unit.Point, value: 2 });
+  const { getLayoutNode, ...rest } = legacy;
+  const parent = { ...rest, ...getLayoutNode() };
+  const restore = wrapFooter(parent);
+  assert.equal(state.wrap, Wrap.Wrap);
+  assert.deepEqual(state.gap, { unit: Unit.Point, value: 0 });
+  restore();
+  assert.equal(state.wrap, Wrap.NoWrap);
+  assert.deepEqual(state.gap, { unit: Unit.Point, value: 2 });
+  assert.equal(state.renders, 2);
+});

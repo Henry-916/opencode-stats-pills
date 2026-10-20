@@ -309,9 +309,10 @@ function hasIconFont() {
 }
 
 // src/layout.ts
-import { Gutter, Unit, Wrap } from "@opentui/core/yoga";
+import { Yoga } from "@opentui/core";
+var { Gutter, Unit, Wrap } = Yoga;
 function wrapFooter(parent) {
-  const node = parent.getLayoutNode();
+  const node = typeof parent.getLayoutNode === "function" ? parent.getLayoutNode() : parent;
   const previousWrap = node.getFlexWrap();
   const previousGap = { ...node.getGap(Gutter.Row) };
   node.setFlexWrap(Wrap.Wrap);

@@ -4,7 +4,7 @@
 
 ## Requirements
 
-- **OpenCode V2**. Tested with **2.0.29**; V1 is not supported.
+- **OpenCode V2**. Tested with **2.1.0**; V1 is not supported.
 - A terminal with mouse support.
 - Node.js and npm to build from source. The OpenTUI development dependencies declare Node.js 26 or later.
 

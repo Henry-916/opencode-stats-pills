@@ -3,7 +3,7 @@
 给 OpenCode V2 加一条轻量统计栏。不用展开侧栏，就能看到生成速度、Token 用量、缓存命中、费用和上下文占用。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![OpenCode](https://img.shields.io/badge/OpenCode-V2%20·%20tested%202.0.29-black.svg)](https://opencode.ai)
+[![OpenCode](https://img.shields.io/badge/OpenCode-V2%20·%20tested%202.1.0-black.svg)](https://opencode.ai)
 
 [English](README.md) · **简体中文**
 
@@ -25,7 +25,7 @@
 
 ## 环境要求
 
-- **OpenCode V2**（已在 **2.0.29** 验证，不支持 V1）
+- **OpenCode V2**（已在 **2.1.0** 验证，不支持 V1）
 - Node.js 和 npm，用于从源码构建
 - 支持鼠标的终端
 
